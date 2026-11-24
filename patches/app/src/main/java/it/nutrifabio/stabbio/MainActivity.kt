@@ -1,0 +1,90 @@
+package it.nutrifabio.stabbio
+
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.util.Base64
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.widget.Toast
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipInputStream
+
+class MainActivity : Activity() {
+    private lateinit var web: WebView
+    private val requestImport = 20
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        web = WebView(this)
+        setContentView(web)
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.settings.allowFileAccess = false
+        web.addJavascriptInterface(Bridge(), "Android")
+        web.loadUrl("file:///android_asset/index.html")
+    }
+
+    inner class Bridge {
+        @JavascriptInterface fun choosePackage() = runOnUiThread {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/zip"
+                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/zip", "application/json", "application/octet-stream"))
+            }
+            startActivityForResult(i, requestImport)
+        }
+
+        @JavascriptInterface fun openInstagramImporter() = runOnUiThread {
+            val page = Uri.parse("https://giolanni.github.io/NutriFaBioStaBBio-download/analizza.html")
+            startActivity(Intent(Intent.ACTION_VIEW, page))
+        }
+    }
+
+    @Deprecated("Legacy result API used for broad Android compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == requestImport && resultCode == RESULT_OK && data?.data != null) importUri(data.data!!)
+    }
+
+    private fun importUri(uri: Uri) {
+        try {
+            val bytes = contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+            val json = if (bytes.take(1).firstOrNull()?.toInt()?.toChar() == '[' || bytes.take(1).firstOrNull()?.toInt()?.toChar() == '{') {
+                String(bytes, Charsets.UTF_8)
+            } else parseZip(bytes)
+            val quoted = JSONObject.quote(json)
+            web.evaluateJavascript("window.NutriApp.importPackage($quoted)", null)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Pacchetto non valido: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun parseZip(bytes: ByteArray): String {
+        var recipes: String? = null
+        val images = mutableMapOf<String, String>()
+        ZipInputStream(bytes.inputStream()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                val safe = entry.name.replace('\\', '/')
+                if (safe.startsWith("/") || safe.contains("../")) throw IllegalArgumentException("Percorso ZIP non sicuro")
+                val out = ByteArrayOutputStream(); zip.copyTo(out); val data = out.toByteArray()
+                if (safe == "recipes.json") recipes = String(data, Charsets.UTF_8)
+                if (safe.startsWith("images/") && data.size <= 5_000_000) {
+                    val mime = when { safe.endsWith(".png", true) -> "image/png"; safe.endsWith(".webp", true) -> "image/webp"; else -> "image/jpeg" }
+                    images[safe] = "data:$mime;base64," + Base64.encodeToString(data, Base64.NO_WRAP)
+                }
+            }
+        }
+        val raw = recipes ?: throw IllegalArgumentException("recipes.json mancante")
+        val array = if (raw.trim().startsWith("[")) JSONArray(raw) else JSONObject(raw).optJSONArray("recipes") ?: JSONArray()
+        for (i in 0 until array.length()) {
+            val recipe = array.getJSONObject(i); val path = recipe.optString("image")
+            images[path]?.let { recipe.put("image_data", it) }
+        }
+        return JSONObject().put("recipes", array).toString()
+    }
+}
