@@ -29,6 +29,45 @@ class MainActivity : Activity() {
     }
 
     inner class Bridge {
+        @JavascriptInterface fun fetchInstagramCaption(raw: String) {
+            Thread {
+                val result = JSONObject()
+                try {
+                    val uri = Uri.parse(raw.trim())
+                    require(uri.scheme == "https" && uri.host in listOf("instagram.com", "www.instagram.com"))
+                    val match = Regex("^/(reel|reels|p)/([A-Za-z0-9_-]+)/?$").matchEntire(uri.path ?: "")
+                        ?: throw IllegalArgumentException("Link Reel o post non valido")
+                    val kind = if (match.groupValues[1] == "p") "p" else "reel"
+                    val url = "https://www.instagram.com/$kind/${match.groupValues[2]}/embed/captioned/"
+                    val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 15000
+                    connection.instanceFollowRedirects = false
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+                    connection.setRequestProperty("Accept", "text/html")
+                    val html = try {
+                        require(connection.responseCode == 200) { "Instagram HTTP ${connection.responseCode}" }
+                        connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                            val buffer = CharArray(4096)
+                            val out = StringBuilder()
+                            while (out.length < 4000000) {
+                                val count = reader.read(buffer)
+                                if (count < 0) break
+                                out.append(buffer, 0, count)
+                            }
+                            out.toString()
+                        }
+                    } finally { connection.disconnect() }
+                    result.put("html", html)
+                } catch (e: Exception) {
+                    result.put("error", e.message ?: "Caption non disponibile")
+                }
+                runOnUiThread {
+                    web.evaluateJavascript("window.NutriApp.captionResult(" + JSONObject.quote(result.toString()) + ")", null)
+                }
+            }.start()
+        }
+
         @JavascriptInterface fun choosePackage() = runOnUiThread {
             val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
