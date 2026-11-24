@@ -41,6 +41,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
           git add NutriFaBioStaBBio-1.2.1.apk
           git commit -m "Pubblica APK NutriFaBioStaBBio 1.2.1"
           git push
