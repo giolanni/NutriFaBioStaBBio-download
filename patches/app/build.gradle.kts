@@ -3,12 +3,22 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "it.nutrifabio.stabbio"
     compileSdk = 35
+
+    signingConfigs {
+        create("prototype") {
+            storeFile = rootProject.file("nutrifabio-prototype.keystore")
+            storePassword = "nutrifabio123"
+            keyAlias = "nutrifabio"
+            keyPassword = "nutrifabio123"
+        }
+    }
+
     defaultConfig {
-        applicationId = "it.nutrifabio.stabbio"
+        applicationId = "it.nutrifabio.stabbio.v12"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2.0-prototype"
+        versionCode = 4
+        versionName = "1.2.1-prototype"
     }
 
     compileOptions {
@@ -18,6 +28,12 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("prototype")
+        }
     }
 }
 
