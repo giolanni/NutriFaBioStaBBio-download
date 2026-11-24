@@ -135,7 +135,7 @@ function deleteRecipe(id){
   cloudDelete(id); recipes = recipes.filter(x => x.id !== id); persist(); $('#detail').close(); render();
 }
 function openProfile(){ $('#profileName').value = profile.name; $('#profileDialog').showModal(); }
-function saveProfile(event){ event.preventDefault(); const name = $('#profileName').value.trim(); if (!name) return; profile = {id:profile.id,name}; localStorage.setItem('profile',JSON.stringify(profile)); $('#profileDialog').close(); updateProfile(); setView('home'); }
+function saveProfile(event){ event.preventDefault(); const name = $('#profileName').value.trim(); if (!name) return; profile = {id:profile.id,name}; localStorage.setItem('profile',JSON.stringify(profile)); $('#profileDialog').close(); updateProfile(); setView('home'); cloudSync(); }
 function updateProfile(){ $('#profileButton').innerHTML = `<span>${esc(profile.name.charAt(0).toUpperCase())}</span><small>${esc(profile.name)}</small>`; }
 
 window.NutriApp = {captionResult, importPackage(raw){
@@ -154,6 +154,8 @@ const cloudURL='https://bpshliyzwjpfmapfkhh.supabase.co';
 const cloudKey='sb_publishable_bowOdZCPWKY9IMsqqrpZ7Q_IjddmzEL';
 let cloudSession=JSON.parse(localStorage.getItem('cloudSession')||'null');
 let cloudBusy=false;
+let cloudAgain=false;
+let pendingDeletes=JSON.parse(localStorage.getItem('pendingDeletes')||'[]');
 const cloudStatus=document.createElement('button');
 cloudStatus.textContent='Account e Community';
 cloudStatus.style.cssText='display:block;margin:12px auto;padding:10px';
@@ -196,14 +198,28 @@ async function cloudRefresh(){
  }catch(e){cloudMessage('Community: '+e.message);}
 }
 async function cloudSync(){
- if(!cloudSession||cloudBusy)return;cloudBusy=true;
+ if(!cloudSession)return;if(cloudBusy){cloudAgain=true;return;}cloudBusy=true;
  try{const uid=await cloudToken();
  await cloudRequest('/rest/v1/profiles?on_conflict=id','POST',{id:uid,display_name:profile.name||'Utente'},true,'resolution=merge-duplicates');
+ for(const id of [...pendingDeletes]){
+ await cloudRequest('/rest/v1/recipes?owner_id=eq.'+uid+'&local_id=eq.'+encodeURIComponent(id),'DELETE');
+ pendingDeletes=pendingDeletes.filter(x=>x!==id);localStorage.setItem('pendingDeletes',JSON.stringify(pendingDeletes));
+ }
+ const own=await cloudRequest('/rest/v1/recipes?select=*&owner_id=eq.'+uid);
+ for(const row of own){
+ if(pendingDeletes.includes(row.local_id))continue;
+ const old=recipes.find(r=>r.id===row.local_id);
+ if(!old||Date.parse(row.updated_at)>Date.parse(old.updated_at||0)){
+ const restored={...row.recipe_data,id:row.local_id,title:row.title,ingredients:row.ingredients,instructions:row.instructions,category:[row.category||'altro'],nutrition:row.nutrition,source_type:'user',visibility:row.is_public?'public':'private',owner_id:profile.id,owner_name:profile.name,updated_at:row.updated_at};
+ recipes=recipes.filter(r=>r.id!==restored.id);recipes.push(restored);
+ }}
+ persist();render();
  const rows=recipes.filter(isMine).map(r=>({owner_id:uid,local_id:r.id,title:r.title,ingredients:r.ingredients||[],instructions:r.instructions||[],category:r.category?.[0],nutrition:r.nutrition,is_public:r.visibility==='public',recipe_data:{servings:r.servings,preparation_minutes:r.preparation_minutes},updated_at:r.updated_at||new Date().toISOString()}));
  if(rows.length)await cloudRequest('/rest/v1/recipes?on_conflict=owner_id,local_id','POST',rows,true,'resolution=merge-duplicates');
  await cloudRefresh();
- }catch(e){cloudMessage('Sincronizzazione: '+e.message);}finally{cloudBusy=false;}
+ }catch(e){cloudMessage('Sincronizzazione: '+e.message);}finally{cloudBusy=false;if(cloudAgain){cloudAgain=false;cloudSync();}}
 }
-async function cloudDelete(id){if(!cloudSession)return;try{const uid=await cloudToken();await cloudRequest('/rest/v1/recipes?owner_id=eq.'+uid+'&local_id=eq.'+encodeURIComponent(id),'DELETE');}catch(e){cloudMessage('Eliminazione online non riuscita: '+e.message);}}
+async function cloudDelete(id){pendingDeletes.push(id);localStorage.setItem('pendingDeletes',JSON.stringify(pendingDeletes));queueMicrotask(cloudSync);}
 window.addEventListener('online',cloudSync);
 if(cloudSession)cloudSync();
+window.addEventListener('focus',cloudSync);
