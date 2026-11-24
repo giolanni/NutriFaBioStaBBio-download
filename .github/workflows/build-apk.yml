@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths:
       - NutriFabioStabbio-prototipo-1.1.zip
-      - .github/workflows/build-apk.yml
+      - .github/workflows/build-apk.yml\n      - patches/**
 
 permissions:
   contents: write
@@ -31,11 +31,11 @@ jobs:
       - name: Compila APK
         run: gradle -p android-project :app:assembleDebug --no-daemon
       - name: Prepara APK per il download
-        run: cp android-project/app/build/outputs/apk/debug/app-debug.apk NutriFaBioStaBBio-1.1.apk
+        run: cp android-project/app/build/outputs/apk/debug/app-debug.apk NutriFaBioStaBBio-1.2.apk
       - name: Pubblica APK nel repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add NutriFaBioStaBBio-1.1.apk
-          git commit -m "Pubblica APK NutriFaBioStaBBio 1.1" || exit 0
+          git commit -m "Pubblica APK NutriFaBioStaBBio 1.2" || exit 0
           git push
