@@ -12,7 +12,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.1.0")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.2.0")
 
 origins = [
     item.strip()
@@ -114,15 +114,27 @@ tempi, calorie o passaggi non presenti: usa null per i numeri mancanti e indica
 i dubbi nelle note. Ingredienti e procedimento devono essere liste ordinate.
 confidence deve essere una tra: alta, media, bassa.
 """
-        response = client.models.generate_content(
-            model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
-            contents=[uploaded, prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=Recipe,
-            ),
-        )
-        return Recipe.model_validate_json(response.text)
+        configured_models = [
+            os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
+            os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash"),
+        ]
+        models = list(dict.fromkeys(model for model in configured_models if model))
+        last_error = None
+        for model in models:
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[uploaded, prompt],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=Recipe,
+                    ),
+                )
+                return Recipe.model_validate_json(response.text)
+            except Exception as exc:
+                last_error = exc
+
+        raise last_error or RuntimeError("Nessun modello Gemini configurato")
     except HTTPException:
         raise
     except Exception as exc:
