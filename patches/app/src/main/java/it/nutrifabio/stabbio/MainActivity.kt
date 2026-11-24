@@ -16,6 +16,7 @@ import java.util.zip.ZipInputStream
 class MainActivity : Activity() {
     private lateinit var web: WebView
     private val requestImport = 20
+    private var photoCallback: android.webkit.ValueCallback<Array<Uri>>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,6 +33,18 @@ class MainActivity : Activity() {
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.allowFileAccess = false
+        web.webChromeClient = object : android.webkit.WebChromeClient() {
+            override fun onShowFileChooser(view: WebView?, callback: android.webkit.ValueCallback<Array<Uri>>?, params: FileChooserParams?): Boolean {
+                photoCallback?.onReceiveValue(null)
+                photoCallback = callback
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "image/*"
+                }
+                startActivityForResult(intent, 21)
+                return true
+            }
+        }
         web.addJavascriptInterface(Bridge(), "Android")
         web.loadUrl("file:///android_asset/index.html")
     }
@@ -94,6 +107,7 @@ class MainActivity : Activity() {
     @Deprecated("Legacy result API used for broad Android compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 21) { photoCallback?.onReceiveValue(if (resultCode == RESULT_OK) data?.data?.let { arrayOf(it) } else null); photoCallback = null; return }
         if (requestCode == requestImport && resultCode == RESULT_OK && data?.data != null) importUri(data.data!!)
     }
 
