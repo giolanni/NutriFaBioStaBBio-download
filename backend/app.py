@@ -1,16 +1,18 @@
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.0.0")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.1.0")
 
 origins = [
     item.strip()
@@ -28,7 +30,6 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
-client = OpenAI()
 INSTAGRAM_PATH = re.compile(r"^/(reel|reels|p)/[A-Za-z0-9_-]+/?", re.I)
 
 
@@ -58,101 +59,93 @@ def validate_instagram_url(value: str) -> str:
     return value.strip()
 
 
-def download_reel_audio(url: str, directory: Path) -> tuple[Path, str]:
+def download_reel(url: str, directory: Path) -> Path:
     output = str(directory / "reel.%(ext)s")
     options = {
-        "format": "bestaudio/best",
+        "format": "best[height<=720]/best",
         "outtmpl": output,
+        "merge_output_format": "mp4",
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
         "socket_timeout": 30,
         "retries": 2,
-        "max_filesize": 60 * 1024 * 1024,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "96",
-            }
-        ],
+        "max_filesize": 80 * 1024 * 1024,
     }
     try:
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=True)
+            path = Path(ydl.prepare_filename(info))
     except Exception as exc:
         raise HTTPException(
             422,
             "Non riesco a leggere questo Reel. Deve essere pubblico e accessibile senza login.",
         ) from exc
 
-    audio = directory / "reel.mp3"
-    if not audio.exists():
-        matches = list(directory.glob("reel.*"))
-        if not matches:
-            raise HTTPException(422, "Il Reel non contiene un audio analizzabile.")
-        audio = matches[0]
-    caption = (info or {}).get("description") or (info or {}).get("title") or ""
-    return audio, caption[:12000]
+    candidates = [path, directory / "reel.mp4", *directory.glob("reel.*")]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    raise HTTPException(422, "Il Reel non contiene un video analizzabile.")
 
 
-def transcribe(audio_path: Path) -> str:
+def analyze_video(video_path: Path) -> Recipe:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "Il servizio gratuito non è ancora configurato.")
+
+    client = genai.Client(api_key=api_key)
+    uploaded = None
     try:
-        with audio_path.open("rb") as audio:
-            result = client.audio.transcriptions.create(
-                model=os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"),
-                file=audio,
-                response_format="json",
-            )
-        return result.text
-    except Exception as exc:
-        raise HTTPException(502, "Trascrizione non riuscita. Riprova tra poco.") from exc
+        uploaded = client.files.upload(file=str(video_path))
+        deadline = time.monotonic() + 180
+        while not uploaded.state or uploaded.state.name != "ACTIVE":
+            if uploaded.state and uploaded.state.name == "FAILED":
+                raise RuntimeError("Elaborazione video fallita")
+            if time.monotonic() > deadline:
+                raise TimeoutError("Elaborazione video scaduta")
+            time.sleep(3)
+            uploaded = client.files.get(name=uploaded.name)
 
-
-def build_recipe(transcript: str, caption: str) -> Recipe:
-    prompt = f"""
-Ricostruisci una ricetta italiana usando esclusivamente le informazioni presenti
-nella didascalia e nella trascrizione di un video. Non inventare quantità, tempi,
-calorie o passaggi non dichiarati: usa null o segnala il dubbio nelle note.
-Normalizza ingredienti e procedimento in liste ordinate. confidence deve essere
-'una tra alta, media, bassa'.
-
-DIDASCALIA:
-{caption or "(assente)"}
-
-TRASCRIZIONE:
-{transcript or "(nessun parlato riconosciuto)"}
+        prompt = """
+Analizza attentamente immagini, scritte in sovrimpressione e audio di questo
+video di cucina. Ricostruisci la ricetta in italiano. Non inventare quantità,
+tempi, calorie o passaggi non presenti: usa null per i numeri mancanti e indica
+i dubbi nelle note. Ingredienti e procedimento devono essere liste ordinate.
+confidence deve essere una tra: alta, media, bassa.
 """
-    try:
-        response = client.responses.parse(
-            model=os.getenv("OPENAI_RECIPE_MODEL", "gpt-5-mini"),
-            input=[
-                {
-                    "role": "system",
-                    "content": "Sei un assistente che estrae fedelmente ricette da contenuti social.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            text_format=Recipe,
+        response = client.models.generate_content(
+            model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
+            contents=[uploaded, prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=Recipe,
+            ),
         )
-        if response.output_parsed is None:
-            raise ValueError("Risposta strutturata assente")
-        return response.output_parsed
+        return Recipe.model_validate_json(response.text)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(502, "Analisi della ricetta non riuscita. Riprova.") from exc
+        raise HTTPException(
+            502,
+            "L’analisi gratuita non è riuscita. Attendi qualche minuto e riprova.",
+        ) from exc
+    finally:
+        if uploaded and uploaded.name:
+            try:
+                client.files.delete(name=uploaded.name)
+            except Exception:
+                pass
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "engine": "gemini-free"}
 
 
 @app.post("/analyze", response_model=Recipe)
-def analyze(payload: AnalyzeRequest, request: Request):
+def analyze(payload: AnalyzeRequest):
     url = validate_instagram_url(payload.url)
-    if not os.getenv("OPENAI_API_KEY"):
-        raise HTTPException(503, "Il servizio non è ancora configurato con la chiave API.")
     with tempfile.TemporaryDirectory(prefix="nutrifabio-") as tmp:
-        audio, caption = download_reel_audio(url, Path(tmp))
-        transcript = transcribe(audio)
-        return build_recipe(transcript, caption)
+        video = download_reel(url, Path(tmp))
+        return analyze_video(video)
