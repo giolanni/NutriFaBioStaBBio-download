@@ -62,13 +62,52 @@ function parseIngredient(line){
 function openAddChoice(){ $('#addChoice').showModal(); }
 function openInstagramImporter(){
   $('#addChoice').close();
-  const page = 'https://giolanni.github.io/NutriFaBioStaBBio-download/analizza.html';
-  if (window.Android && typeof Android.openInstagramImporter === 'function') {
-    Android.openInstagramImporter();
-  } else {
-    window.location.href = page;
-  }
+  $('#igDialog').showModal();
 }
+function fetchIg(){
+  const url = $('#igUrl').value.trim();
+  if (!url) { $('#igStatus').textContent = 'Inserisci il link Instagram.'; return; }
+  $('#igFetch').disabled = true;
+  $('#igStatus').textContent = 'Lettura della caption da Instagram…';
+  if (window.Android && Android.fetchInstagramCaption) Android.fetchInstagramCaption(url);
+  else { $('#igFetch').disabled = false; $('#igStatus').textContent = 'Disponibile nell’app Android.'; }
+}
+function captionResult(raw){
+  $('#igFetch').disabled = false;
+  const result = JSON.parse(raw);
+  if (result.error) { $('#igStatus').textContent = result.error + '. Puoi incollare la caption manualmente.'; return; }
+  const doc = new DOMParser().parseFromString(result.html, 'text/html');
+  const node = doc.querySelector('.Caption');
+  if (!node) { $('#igStatus').textContent = 'Instagram non ha restituito la caption. Incollala manualmente o prova il servizio web.'; return; }
+  node.querySelectorAll('.CaptionUsername,.CaptionComments,.CaptionCommentsExpand,script,style').forEach(x=>x.remove());
+  node.querySelectorAll('br').forEach(x=>x.replaceWith(doc.createTextNode('\n')));
+  const caption = node.textContent.trim();
+  if (!caption) { $('#igStatus').textContent = 'Caption vuota.'; return; }
+  $('#igCaption').value = caption;
+  $('#igStatus').textContent = 'Caption recuperata! Controlla il testo e premi Analizza.';
+}
+function parseIg(){
+  const lines = $('#igCaption').value.split(/\r?\n/).map(x=>x.replace(/#\S+/g,'').trim()).filter(Boolean);
+  if (!lines.length) { $('#igStatus').textContent = 'Inserisci una caption.'; return; }
+  const ingredients=[], steps=[];
+  let section='', title=lines[0];
+  for (const raw of lines.slice(1)){
+    let line=raw.replace(/^[^\p{L}\p{N}]+/u,'').trim();
+    if (!line) continue;
+    const h=line.match(/^(ingredienti|ingredients|procedimento|preparazione|istruzioni|directions|steps|note|consigli)\b\s*[:–-]?\s*/i);
+    if(h){section=/^(ingredienti|ingredients)$/i.test(h[1])?'i':/^(note|consigli)$/i.test(h[1])?'n':'s';line=line.slice(h[0].length).trim();}
+    if(!line) continue;
+    if(section==='i') ingredients.push(line);
+    else if(section==='s') steps.push(line);
+    else if(!section && /^\d+(?:[.,/]\d+)?\s*(?:g|kg|ml|l|uova|cucchiai|cucchiaini)\b/i.test(line)) ingredients.push(line);
+  }
+  $('#igDialog').close(); openEditor();
+  $('#editTitle').value=title.slice(0,100);
+  $('#editIngredients').value=ingredients.join('\n');
+  $('#editInstructions').value=steps.join('\n');
+  if(!ingredients.length || !steps.length) alert('Ricetta parziale: completa i campi mancanti dalla caption prima di salvare.');
+}
+
 function openEditor(id=''){
   const r = id ? recipes.find(x => x.id === id && isMine(x)) : null;
   $('#recipeForm').reset(); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
@@ -95,7 +134,7 @@ function openProfile(){ $('#profileName').value = profile.name; $('#profileDialo
 function saveProfile(event){ event.preventDefault(); const name = $('#profileName').value.trim(); if (!name) return; profile = {id:`utente_${slug(name)}`,name}; localStorage.setItem('profile',JSON.stringify(profile)); $('#profileDialog').close(); updateProfile(); setView('home'); }
 function updateProfile(){ $('#profileButton').innerHTML = `<span>${esc(profile.name.charAt(0).toUpperCase())}</span><small>${esc(profile.name)}</small>`; }
 
-window.NutriApp = {importPackage(raw){
+window.NutriApp = {captionResult, importPackage(raw){
   try {
     const p = JSON.parse(raw), incoming = Array.isArray(p) ? p : (p.recipes || []), map = new Map(recipes.map(r => [r.id,r]));
     incoming.forEach(r => { const old = map.get(r.id); if (old?.source_type === 'user') return; map.set(r.id,{...r,source_type:'catalog',visibility:'public',owner_id:'catalog',owner_name:r.source?.author || 'Nutri Fabio Stabbio'}); });
