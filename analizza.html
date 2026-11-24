@@ -1,6 +1,65 @@
 <!doctype html>
 <html lang="it">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Importa da Instagram · NutriFaBioStaBBio</title>
-<style>:root{--g:#496b3b;--c:#f7f3ea;--i:#263126}*{box-sizing:border-box}body{margin:0;background:var(--c);color:var(--i);font-family:system-ui,sans-serif}.wrap{max-width:680px;margin:auto;padding:28px 20px}.brand{color:var(--g);font-weight:800;letter-spacing:1.4px;font-size:12px}h1{font:700 38px Georgia,serif;margin:8px 0 12px}.card{background:#fff;border-radius:24px;padding:24px;margin-top:24px;box-shadow:0 10px 30px #26312614}label{display:block;font-weight:800;margin-bottom:8px}input{width:100%;padding:15px;border:1px solid #d5d1c8;border-radius:14px;font-size:16px}button{width:100%;margin-top:14px;padding:15px;border:0;border-radius:14px;background:var(--g);color:#fff;font-weight:800;font-size:16px}.hint,.status{color:#687066;line-height:1.5}.status{display:none;background:#f1f6ee;padding:14px;border-radius:13px;margin-top:15px}.back{display:inline-block;color:var(--g);font-weight:700;text-decoration:none;margin-top:18px}</style>
-</head><body><main class="wrap"><div class="brand">NUTRIFABIOSTABBIO</div><h1>Importa da Instagram</h1><p class="hint">Incolla il link di un Reel pubblico. Il sistema analizzerà il contenuto e preparerà una ricetta modificabile.</p><section class="card"><label for="url">Link del Reel Instagram</label><input id="url" type="url" inputmode="url" placeholder="https://www.instagram.com/reel/…" required><button onclick="analyze()">Analizza ricetta</button><div id="status" class="status"></div></section><a class="back" href="./">← Torna alla pagina dell’app</a></main>
-<script>function analyze(){const u=document.getElementById('url').value.trim(),s=document.getElementById('status');s.style.display='block';if(!/^https:\/\/(www\.)?instagram\.com\/(reel|p)\//i.test(u)){s.textContent='Inserisci un link pubblico valido di Instagram.';return}s.textContent='Link riconosciuto. Il servizio automatico di analisi verrà collegato al prossimo passaggio.'}</script></body></html>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Importa da Instagram · NutriFaBioStaBBio</title>
+<style>
+:root{--g:#496b3b;--c:#f7f3ea;--i:#263126;--e:#9e382f}*{box-sizing:border-box}body{margin:0;background:var(--c);color:var(--i);font-family:system-ui,sans-serif}.wrap{max-width:720px;margin:auto;padding:28px 20px 60px}.brand{color:var(--g);font-weight:800;letter-spacing:1.4px;font-size:12px}h1{font:700 38px Georgia,serif;margin:8px 0 12px}.card{background:#fff;border-radius:24px;padding:24px;margin-top:24px;box-shadow:0 10px 30px #26312614}label{display:block;font-weight:800;margin:14px 0 8px}input,textarea,select{width:100%;padding:14px;border:1px solid #d5d1c8;border-radius:14px;font:16px system-ui;background:#fff}textarea{min-height:130px;resize:vertical}button{width:100%;margin-top:14px;padding:15px;border:0;border-radius:14px;background:var(--g);color:#fff;font-weight:800;font-size:16px}button:disabled{opacity:.55}.hint,.status{color:#687066;line-height:1.5}.status{display:none;background:#f1f6ee;padding:14px;border-radius:13px;margin-top:15px}.status.error{background:#fff0ee;color:var(--e)}.back{display:inline-block;color:var(--g);font-weight:700;text-decoration:none;margin-top:18px}.result{display:none}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.meta{font-size:13px;color:#687066;margin-top:12px}@media(max-width:560px){.grid{grid-template-columns:1fr}h1{font-size:34px}}
+</style>
+</head>
+<body><main class="wrap">
+<div class="brand">NUTRIFABIOSTABBIO</div>
+<h1>Importa da Instagram</h1>
+<p class="hint">Incolla il link di un Reel pubblico. L’analisi può richiedere circa un minuto al primo utilizzo.</p>
+<section class="card">
+<label for="url">Link del Reel Instagram</label>
+<input id="url" type="url" inputmode="url" placeholder="https://www.instagram.com/reel/…" required>
+<button id="analyze" type="button">Analizza ricetta</button>
+<div id="status" class="status" role="status"></div>
+</section>
+<section id="result" class="card result">
+<h2>Ricetta estratta</h2>
+<p class="hint">Controlla e correggi i dati prima di salvarli.</p>
+<label for="title">Titolo</label><input id="title">
+<div class="grid">
+<div><label for="category">Categoria</label><input id="category"></div>
+<div><label for="time">Tempo (minuti)</label><input id="time" type="number" min="0"></div>
+<div><label for="servings">Porzioni</label><input id="servings" type="number" min="1"></div>
+<div><label for="calories">Calorie per porzione</label><input id="calories" type="number" min="0"></div>
+</div>
+<label for="ingredients">Ingredienti — uno per riga</label><textarea id="ingredients"></textarea>
+<label for="steps">Procedimento — un passaggio per riga</label><textarea id="steps"></textarea>
+<label for="notes">Note</label><textarea id="notes"></textarea>
+<p id="confidence" class="meta"></p>
+<button id="download" type="button">Scarica ricetta per l’app</button>
+</section>
+<a class="back" href="./">← Torna alla pagina dell’app</a>
+</main>
+<script>
+const API_URL=(new URLSearchParams(location.search).get('api')||localStorage.getItem('nutrifabio_api')||'https://nutrifabiostabbio-api.onrender.com').replace(/\/$/,'');
+const el=id=>document.getElementById(id);
+const status=(message,error=false)=>{el('status').style.display='block';el('status').className='status'+(error?' error':'');el('status').textContent=message};
+function value(id,v){el(id).value=v??''}
+el('analyze').addEventListener('click',async()=>{
+ const url=el('url').value.trim();
+ if(!/^https:\/\/(www\.)?instagram\.com\/(reel|reels|p)\//i.test(url)){status('Inserisci un link pubblico valido di Instagram.',true);return}
+ el('analyze').disabled=true;status('Sto recuperando e analizzando il Reel… Non chiudere la pagina.');
+ try{
+  const response=await fetch(API_URL+'/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.detail||'Il servizio non ha completato l’analisi.');
+  value('title',data.title);value('category',data.category);value('time',data.time_minutes);value('servings',data.servings);
+  value('calories',data.calories_per_serving);value('ingredients',(data.ingredients||[]).join('\n'));
+  value('steps',(data.steps||[]).join('\n'));value('notes',(data.notes||[]).join('\n'));
+  el('confidence').textContent='Affidabilità dell’estrazione: '+(data.confidence||'non indicata');
+  el('result').style.display='block';status('Analisi completata. Controlla la ricetta qui sotto.');el('result').scrollIntoView({behavior:'smooth'});
+ }catch(err){
+  const offline=/Failed to fetch|NetworkError/i.test(String(err));
+  status(offline?'Il backend non è ancora raggiungibile oppure si sta avviando. Attendi un minuto e riprova.':err.message,true);
+ }finally{el('analyze').disabled=false}
+});
+el('download').addEventListener('click',()=>{
+ const recipe={title:el('title').value.trim(),category:el('category').value.trim(),time_minutes:Number(el('time').value)||null,servings:Number(el('servings').value)||null,calories_per_serving:Number(el('calories').value)||null,ingredients:el('ingredients').value.split('\n').map(x=>x.trim()).filter(Boolean),steps:el('steps').value.split('\n').map(x=>x.trim()).filter(Boolean),notes:el('notes').value.split('\n').map(x=>x.trim()).filter(Boolean),source_url:el('url').value.trim(),visibility:'private'};
+ const blob=new Blob([JSON.stringify(recipe,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='ricetta-instagram.json';a.click();URL.revokeObjectURL(a.href);
+});
+</script></body></html>
