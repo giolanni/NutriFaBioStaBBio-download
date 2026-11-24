@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="choices.css">
+  <title>Nutri Fabio Stabbio</title>
+</head>
+<body>
+  <header>
+    <div><small>IL TUO RICETTARIO</small><h1>Nutri Fabio Stabbio</h1></div>
+    <button id="profileButton" class="profile" onclick="openProfile()" aria-label="Cambia profilo"></button>
+  </header>
+  <nav class="tabs" aria-label="Sezioni">
+    <button data-view="home" class="on" onclick="setView('home')">Scopri</button>
+    <button data-view="mine" onclick="setView('mine')">Le mie ricette</button>
+    <button data-view="community" onclick="setView('community')">Community</button>
+  </nav>
+  <main>
+    <section class="hero">
+      <div class="heroTitle"><div><p id="eyebrow"></p><h2 id="viewTitle">Cosa vuoi preparare?</h2></div><button class="add" onclick="openAddChoice()">＋ Ricetta</button></div>
+      <div class="search"><span>⌕</span><input id="q" placeholder="Ingrediente, ricetta o voglia…"></div>
+      <div id="chips" class="chips"></div>
+    </section>
+    <section class="bar"><strong id="count"></strong><button onclick="Android.choosePackage()">Importa pacchetto</button></section>
+    <section id="grid" class="grid"></section>
+  </main>
+  <dialog id="detail"><button class="close" onclick="detail.close()">×</button><div id="detailBody"></div></dialog>
+  <dialog id="addChoice">
+    <div class="form choiceForm">
+      <button type="button" class="close" onclick="addChoice.close()">×</button>
+      <small>NUOVA RICETTA</small><h2>Come vuoi inserirla?</h2>
+      <button class="choiceCard instagram" onclick="openInstagramImporter()"><span class="choiceIcon">▶</span><span><strong>Importa da Instagram</strong><small>Incolla il link del Reel e analizza la ricetta</small></span><b>›</b></button>
+      <button class="choiceCard manual" onclick="addChoice.close();openEditor()"><span class="choiceIcon">✎</span><span><strong>Inserisci manualmente</strong><small>Compila titolo, ingredienti e procedimento</small></span><b>›</b></button>
+    </div>
+  </dialog>
+  <dialog id="editor">
+    <form id="recipeForm" class="form" onsubmit="saveRecipe(event)">
+      <button type="button" class="close" onclick="editor.close()">×</button>
+      <small>RICETTA PERSONALE</small><h2 id="editorTitle">Nuova ricetta</h2>
+      <input type="hidden" id="editId">
+      <label>Titolo<input id="editTitle" required maxlength="100" placeholder="Es. Polpette di zucchine"></label>
+      <div class="two"><label>Categoria<select id="editCategory"><option>Primo</option><option>Secondo</option><option>Pasto completo</option><option>Dolce</option><option>Altro</option></select></label><label>Tempo (min)<input id="editMinutes" type="number" min="0" inputmode="numeric"></label></div>
+      <label>Ingredienti <span>uno per riga</span><textarea id="editIngredients" required rows="5" placeholder="160 g pasta&#10;250 g pomodorini"></textarea></label>
+      <label>Procedimento <span>un passaggio per riga</span><textarea id="editInstructions" required rows="6" placeholder="Cuoci la pasta…&#10;Prepara il condimento…"></textarea></label>
+      <div class="two"><label>Porzioni<input id="editServings" type="number" min="1" inputmode="numeric"></label><label>Calorie per porzione<input id="editCalories" type="number" min="0" inputmode="numeric"></label></div>
+      <fieldset><legend>Chi può vederla?</legend><label class="visibility"><input type="radio" name="visibility" value="private" checked><span>🔒 <strong>Privata</strong><small>Solo tu</small></span></label><label class="visibility"><input type="radio" name="visibility" value="public"><span>🌍 <strong>Pubblica</strong><small>Visibile nella Community</small></span></label></fieldset>
+      <button class="primary" type="submit">Salva ricetta</button>
+    </form>
+  </dialog>
+  <dialog id="profileDialog">
+    <form class="form" onsubmit="saveProfile(event)">
+      <button type="button" class="close" onclick="profileDialog.close()">×</button>
+      <small>PROFILO</small><h2>Il tuo ricettario</h2>
+      <p class="hint">Le ricette private appartengono soltanto a questo profilo.</p>
+      <label>Il tuo nome<input id="profileName" required maxlength="40" placeholder="Nome"></label>
+      <button class="primary" type="submit">Continua</button>
+    </form>
+  </dialog>
+  <script src="app.js"></script>
+</body>
+</html>
