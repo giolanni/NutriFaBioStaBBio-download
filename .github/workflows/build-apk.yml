@@ -1,0 +1,41 @@
+name: Compila APK Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - NutriFabioStabbio-prototipo-1.1.zip
+      - .github/workflows/build-apk.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recupera il progetto
+        uses: actions/checkout@v4
+      - name: Configura Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configura Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Estrai il progetto
+        run: unzip -q NutriFabioStabbio-prototipo-1.1.zip -d android-project
+      - name: Compila APK
+        run: gradle -p android-project :app:assembleDebug --no-daemon
+      - name: Prepara APK per il download
+        run: cp android-project/app/build/outputs/apk/debug/app-debug.apk NutriFaBioStaBBio-1.1.apk
+      - name: Pubblica APK nel repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add NutriFaBioStaBBio-1.1.apk
+          git commit -m "Pubblica APK NutriFaBioStaBBio 1.1" || exit 0
+          git push
