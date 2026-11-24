@@ -12,6 +12,7 @@ const stored = JSON.parse(localStorage.getItem('recipes') || 'null');
 let recipes = (stored || sample).map(r => ({...r,source_type:r.source_type || 'catalog',visibility:r.visibility || 'public',owner_id:r.owner_id || 'catalog',owner_name:r.owner_name || r.source?.author || 'Nutri Fabio Stabbio'}));
 let profile = JSON.parse(localStorage.getItem('profile') || 'null') || {id:'utente_'+Date.now(),name:''};
 let remoteRecipes = [];
+recipes=recipes.filter(r=>r.id!=='community_demo');
 let active = 'Tutte', view = 'home';
 const cats = ['Tutte','Primo','Secondo','Pasto completo','Dolce','Altro'];
 
@@ -112,9 +113,10 @@ function parseIg(){
   $('#editInstructions').value=steps.join('\n');
   if(!ingredients.length || !steps.length) alert('Ricetta parziale: completa i campi mancanti dalla caption prima di salvare.');
 }
+let editorImage=null;
 function openEditor(id=''){
   const r = id ? recipes.find(x => x.id === id && isMine(x)) : null;
-  $('#recipeForm').reset(); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
+  editorImage=r?.image_data||null; $('#recipeForm').reset(); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
   if (r) {
     $('#editTitle').value = r.title || ''; $('#editCategory').value = (r.category || ['Altro'])[0].replace(/^./, c => c.toUpperCase()); $('#editMinutes').value = r.preparation_minutes || '';
     $('#editIngredients').value = (r.ingredients || []).map(i => [i.quantity,i.unit,i.name].filter(v => v !== '' && v != null).join(' ')).join('\n');
@@ -127,8 +129,8 @@ function openEditor(id=''){
 function saveRecipe(event){
   event.preventDefault(); const id = $('#editId').value || `user_${profile.id}_${Date.now()}`;
   const previous = recipes.find(r => r.id === id); if (previous && !isMine(previous)) return;
-  const recipe = {id,title:$('#editTitle').value.trim(),category:[$('#editCategory').value.toLowerCase()],ingredients:$('#editIngredients').value.split('\n').filter(x=>x.trim()).map(parseIngredient),instructions:$('#editInstructions').value.split('\n').filter(x=>x.trim()).map(x=>x.trim()),servings:Number($('#editServings').value) || null,preparation_minutes:Number($('#editMinutes').value) || null,nutrition:{...(previous?.nutrition || {}),calories_kcal:Number($('#editCalories').value) || null},source_type:'user',visibility:document.querySelector('input[name="visibility"]:checked').value,owner_id:profile.id,owner_name:profile.name,updated_at:new Date().toISOString()};
-  recipes = previous ? recipes.map(r => r.id === id ? recipe : r) : [recipe,...recipes]; persist(); $('#editor').close(); setView('mine'); cloudSync();
+  const recipe = {image_data:previous?.image_data||null,id,title:$('#editTitle').value.trim(),category:[$('#editCategory').value.toLowerCase()],ingredients:$('#editIngredients').value.split('\n').filter(x=>x.trim()).map(parseIngredient),instructions:$('#editInstructions').value.split('\n').filter(x=>x.trim()).map(x=>x.trim()),servings:Number($('#editServings').value) || null,preparation_minutes:Number($('#editMinutes').value) || null,nutrition:{...(previous?.nutrition || {}),calories_kcal:Number($('#editCalories').value) || null},source_type:'user',visibility:document.querySelector('input[name="visibility"]:checked').value,owner_id:profile.id,owner_name:profile.name,updated_at:new Date().toISOString()};
+  recipe.image_data=editorImage; recipes = previous ? recipes.map(r => r.id === id ? recipe : r) : [recipe,...recipes]; persist(); $('#editor').close(); setView('mine'); cloudSync();
 }
 function deleteRecipe(id){
   const r = recipes.find(x => x.id === id); if (!r || !isMine(r) || !confirm(`Eliminare “${r.title}”?`)) return;
@@ -150,6 +152,7 @@ $('#q').addEventListener('input',render); updateProfile(); setView('home');
 
 if (!profile.name) { openProfile(); $('#profileDialog').addEventListener('cancel', e=>{if(!profile.name)e.preventDefault();}); }
 
+function validImage(s){return typeof s==='string'&&/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(s)&&s.length<350000?s:null;}
 const cloudURL='https://bpshliyzwjpfmapfkhh.supabase.co';
 const cloudKey='sb_publishable_bowOdZCPWKY9IMsqqrpZ7Q_IjddmzEL';
 let cloudSession=JSON.parse(localStorage.getItem('cloudSession')||'null');
@@ -194,7 +197,7 @@ $('#cloudLogout').onclick=()=>{cloudSession=null;localStorage.removeItem('cloudS
 async function cloudRefresh(){
  if(!cloudSession){cloudMessage('Accedi per vedere la Community');return;}
  try{const uid=await cloudToken();const rows=await cloudRequest('/rest/v1/recipes?select=*,profiles(display_name)&is_public=eq.true&owner_id=neq.'+uid);
- remoteRecipes=rows.map(r=>({...r.recipe_data,id:'remote_'+r.id,title:r.title,ingredients:r.ingredients,instructions:r.instructions,category:[r.category||'altro'],nutrition:r.nutrition,source_type:'user',visibility:'public',owner_id:r.owner_id,owner_name:r.profiles?.display_name||'Utente',image_data:null}));render();cloudMessage('Community aggiornata');
+ remoteRecipes=rows.map(r=>({...r.recipe_data,id:'remote_'+r.id,title:r.title,ingredients:r.ingredients,instructions:r.instructions,category:[r.category||'altro'],nutrition:r.nutrition,source_type:'user',visibility:'public',owner_id:r.owner_id,owner_name:r.profiles?.display_name||'Utente',image_data:validImage(r.recipe_data?.image_data)}));render();cloudMessage('Community aggiornata');
  }catch(e){cloudMessage('Community: '+e.message);}
 }
 async function cloudSync(){
@@ -210,11 +213,11 @@ async function cloudSync(){
  if(pendingDeletes.includes(row.local_id))continue;
  const old=recipes.find(r=>r.id===row.local_id);
  if(!old||Date.parse(row.updated_at)>Date.parse(old.updated_at||0)){
- const restored={...row.recipe_data,id:row.local_id,title:row.title,ingredients:row.ingredients,instructions:row.instructions,category:[row.category||'altro'],nutrition:row.nutrition,source_type:'user',visibility:row.is_public?'public':'private',owner_id:profile.id,owner_name:profile.name,updated_at:row.updated_at};
+ const restored={...row.recipe_data,image_data:validImage(row.recipe_data?.image_data),id:row.local_id,title:row.title,ingredients:row.ingredients,instructions:row.instructions,category:[row.category||'altro'],nutrition:row.nutrition,source_type:'user',visibility:row.is_public?'public':'private',owner_id:profile.id,owner_name:profile.name,updated_at:row.updated_at};
  recipes=recipes.filter(r=>r.id!==restored.id);recipes.push(restored);
  }}
  persist();render();
- const rows=recipes.filter(isMine).map(r=>({owner_id:uid,local_id:r.id,title:r.title,ingredients:r.ingredients||[],instructions:r.instructions||[],category:r.category?.[0],nutrition:r.nutrition,is_public:r.visibility==='public',recipe_data:{servings:r.servings,preparation_minutes:r.preparation_minutes},updated_at:r.updated_at||new Date().toISOString()}));
+ const rows=recipes.filter(isMine).filter(r=>!own.some(o=>o.local_id===r.id&&Date.parse(o.updated_at)>=Date.parse(r.updated_at||0))).map(r=>({owner_id:uid,local_id:r.id,title:r.title,ingredients:r.ingredients||[],instructions:r.instructions||[],category:r.category?.[0],nutrition:r.nutrition,is_public:r.visibility==='public',recipe_data:{servings:r.servings,preparation_minutes:r.preparation_minutes,image_data:validImage(r.image_data)},updated_at:r.updated_at||new Date().toISOString()}));
  if(rows.length)await cloudRequest('/rest/v1/recipes?on_conflict=owner_id,local_id','POST',rows,true,'resolution=merge-duplicates');
  await cloudRefresh();
  }catch(e){cloudMessage('Sincronizzazione: '+e.message);}finally{cloudBusy=false;if(cloudAgain){cloudAgain=false;cloudSync();}}
@@ -223,3 +226,9 @@ async function cloudDelete(id){pendingDeletes.push(id);localStorage.setItem('pen
 window.addEventListener('online',cloudSync);
 if(cloudSession)cloudSync();
 window.addEventListener('focus',cloudSync);
+
+const imageInput=document.createElement('input');
+imageInput.type='file';imageInput.accept='image/*';
+const imageLabel=document.createElement('label');imageLabel.textContent='Foto della ricetta';imageLabel.append(imageInput);
+$('#recipeForm').prepend(imageLabel);
+imageInput.onchange=async()=>{try{const file=imageInput.files[0];if(!file)return;const img=new Image();const url=URL.createObjectURL(file);try{img.src=url;await img.decode();const canvas=document.createElement('canvas');const scale=Math.min(1,640/Math.max(img.width,img.height));canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);editorImage=validImage(canvas.toDataURL('image/jpeg',0.65));if(!editorImage)throw Error('Foto troppo grande');}finally{URL.revokeObjectURL(url);}}catch(e){alert(e.message);}};
