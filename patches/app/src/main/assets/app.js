@@ -62,6 +62,9 @@ function parseIngredient(line){
 function openAddChoice(){ $('#addChoice').showModal(); }
 function openInstagramImporter(){
   $('#addChoice').close();
+  $('#igUrl').value = '';
+  $('#igCaption').value = '';
+  $('#igStatus').textContent = '';
   $('#igDialog').showModal();
 }
 function fetchIg(){
