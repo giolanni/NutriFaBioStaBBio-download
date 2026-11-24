@@ -21,6 +21,14 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         web = WebView(this)
         setContentView(web)
+        web.setOnApplyWindowInsetsListener { v, insets ->
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            }
+            insets
+        }
+        web.requestApplyInsets()
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.allowFileAccess = false
