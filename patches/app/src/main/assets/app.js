@@ -11,6 +11,7 @@ const slug = s => norm(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replac
 const stored = JSON.parse(localStorage.getItem('recipes') || 'null');
 let recipes = (stored || sample).map(r => ({...r,source_type:r.source_type || 'catalog',visibility:r.visibility || 'public',owner_id:r.owner_id || 'catalog',owner_name:r.owner_name || r.source?.author || 'Nutri Fabio Stabbio'}));
 let profile = JSON.parse(localStorage.getItem('profile') || 'null') || {id:'utente_'+Date.now(),name:''};
+let remoteRecipes = [];
 let active = 'Tutte', view = 'home';
 const cats = ['Tutte','Primo','Secondo','Pasto completo','Dolce','Altro'];
 
@@ -19,7 +20,7 @@ function isMine(r){ return r.source_type === 'user' && r.owner_id === profile.id
 function canSee(r){ return r.visibility === 'public' || isMine(r) || r.source_type === 'catalog'; }
 function visibleRecipes(){
   const query = norm($('#q').value);
-  return recipes.filter(r => {
+  return [...recipes,...remoteRecipes].filter(r => {
     if (!canSee(r)) return false;
     if (view === 'mine' && !isMine(r)) return false;
     if (view === 'community' && !(r.source_type === 'user' && r.visibility === 'public')) return false;
@@ -42,6 +43,7 @@ function render(){
 
 function renderChips(){ $('#chips').innerHTML = cats.map(c => `<button class="chip ${c === active ? 'on' : ''}" onclick="active='${c}';renderChips();render()">${c}</button>`).join(''); }
 function setView(next){
+  if(next === 'community') queueMicrotask(()=>cloudRefresh());
   view = next; active = 'Tutte'; $('#q').value = '';
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
   const copy = {home:['Il tuo archivio','Cosa vuoi preparare?'],mine:[`Ricettario di ${profile.name}`,'Le mie ricette'],community:['RICETTE CONDIVISE','Dalla community']};
@@ -49,7 +51,7 @@ function setView(next){
 }
 
 function openRecipe(id){
-  const r = recipes.find(x => x.id === id); if (!r || !canSee(r)) return;
+  const r = [...recipes,...remoteRecipes].find(x => x.id === id); if (!r || !canSee(r)) return;
   const n = r.nutrition || {}, mine = isMine(r);
   $('#detailBody').innerHTML = `<div class="detailPhoto" style="${r.image_data ? `background-image:url('${esc(r.image_data)}')` : ''}"></div><div class="detailContent"><div class="detailHead"><span class="tag">${esc((r.category || []).join(' · '))}</span>${mine ? `<span class="privacy ${r.visibility}">${r.visibility === 'private' ? '🔒 Privata' : '🌍 Pubblica'}</span>` : ''}</div><h2>${esc(r.title)}</h2>${r.source_type === 'user' ? `<p class="byline">Ricetta di <strong>${esc(r.owner_name)}</strong></p>` : ''}<div class="meta">${esc(r.preparation_minutes || '—')} minuti · ${esc(r.servings || '—')} porzioni</div><h3>Valori nutrizionali</h3><div class="macro"><div><strong>${esc(n.calories_kcal ?? '—')}</strong>kcal</div><div><strong>${esc(n.protein_g ?? '—')} g</strong>proteine</div><div><strong>${esc(n.carbohydrates_g ?? '—')} g</strong>carbo</div><div><strong>${esc(n.fat_g ?? '—')} g</strong>grassi</div></div><h3>Ingredienti</h3><ul>${(r.ingredients || []).map(i => `<li>${esc(i.quantity ?? '')} ${esc(i.unit ?? '')} ${esc(i.name)}</li>`).join('')}</ul><h3>Procedimento</h3><ol>${(r.instructions || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>${mine ? `<div class="actions"><button onclick="detail.close();openEditor('${esc(r.id)}')">Modifica</button><button class="danger" onclick="deleteRecipe('${esc(r.id)}')">Elimina</button></div>` : ''}</div>`;
   $('#detail').showModal();
@@ -126,11 +128,11 @@ function saveRecipe(event){
   event.preventDefault(); const id = $('#editId').value || `user_${profile.id}_${Date.now()}`;
   const previous = recipes.find(r => r.id === id); if (previous && !isMine(previous)) return;
   const recipe = {id,title:$('#editTitle').value.trim(),category:[$('#editCategory').value.toLowerCase()],ingredients:$('#editIngredients').value.split('\n').filter(x=>x.trim()).map(parseIngredient),instructions:$('#editInstructions').value.split('\n').filter(x=>x.trim()).map(x=>x.trim()),servings:Number($('#editServings').value) || null,preparation_minutes:Number($('#editMinutes').value) || null,nutrition:{...(previous?.nutrition || {}),calories_kcal:Number($('#editCalories').value) || null},source_type:'user',visibility:document.querySelector('input[name="visibility"]:checked').value,owner_id:profile.id,owner_name:profile.name,updated_at:new Date().toISOString()};
-  recipes = previous ? recipes.map(r => r.id === id ? recipe : r) : [recipe,...recipes]; persist(); $('#editor').close(); setView('mine');
+  recipes = previous ? recipes.map(r => r.id === id ? recipe : r) : [recipe,...recipes]; persist(); $('#editor').close(); setView('mine'); cloudSync();
 }
 function deleteRecipe(id){
   const r = recipes.find(x => x.id === id); if (!r || !isMine(r) || !confirm(`Eliminare “${r.title}”?`)) return;
-  recipes = recipes.filter(x => x.id !== id); persist(); $('#detail').close(); render();
+  cloudDelete(id); recipes = recipes.filter(x => x.id !== id); persist(); $('#detail').close(); render();
 }
 function openProfile(){ $('#profileName').value = profile.name; $('#profileDialog').showModal(); }
 function saveProfile(event){ event.preventDefault(); const name = $('#profileName').value.trim(); if (!name) return; profile = {id:profile.id,name}; localStorage.setItem('profile',JSON.stringify(profile)); $('#profileDialog').close(); updateProfile(); setView('home'); }
@@ -147,3 +149,61 @@ window.NutriApp = {captionResult, importPackage(raw){
 $('#q').addEventListener('input',render); updateProfile(); setView('home');
 
 if (!profile.name) { openProfile(); $('#profileDialog').addEventListener('cancel', e=>{if(!profile.name)e.preventDefault();}); }
+
+const cloudURL='https://bpshliyzwjpfmapfkhh.supabase.co';
+const cloudKey='sb_publishable_bowOdZCPWKY9IMsqqrpZ7Q_IjddmzEL';
+let cloudSession=JSON.parse(localStorage.getItem('cloudSession')||'null');
+let cloudBusy=false;
+const cloudStatus=document.createElement('button');
+cloudStatus.textContent='Account e Community';
+cloudStatus.style.cssText='display:block;margin:12px auto;padding:10px';
+document.body.append(cloudStatus);
+const cloudDialog=document.createElement('dialog');
+cloudDialog.innerHTML='<form id="cloudForm"><h2>Account Community</h2><p id="cloudMessage"></p><label>Email<input id="cloudEmail" type="email" autocomplete="email" required></label><label>Password<input id="cloudPassword" type="password" autocomplete="current-password" minlength="6" required></label><button type="submit">Accedi</button><button type="button" id="cloudRegister">Registrati</button><button type="button" id="cloudLogout">Esci</button><button type="button" id="cloudClose">Chiudi</button></form>';
+document.body.append(cloudDialog);
+function cloudMessage(s){$('#cloudMessage').textContent=s;cloudStatus.textContent=s;}
+async function cloudRequest(path,method='GET',body,auth=true,prefer=''){
+ const headers={apikey:cloudKey,'Content-Type':'application/json'};
+ if(auth&&cloudSession?.access_token)headers.Authorization='Bearer '+cloudSession.access_token;
+ if(prefer)headers.Prefer=prefer;
+ const res=await fetch(cloudURL+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
+ const raw=await res.text();let data;try{data=JSON.parse(raw)}catch{data=raw}
+ if(!res.ok)throw Error(data?.msg||data?.message||data?.error_description||'HTTP '+res.status);
+ return data;
+}
+function cloudStore(s){cloudSession=s;localStorage.setItem('cloudSession',JSON.stringify(s));}
+async function cloudToken(){if(!cloudSession)throw Error('Accedi alla Community');if((cloudSession.expires_at||0)<Date.now()/1000+60){cloudStore(await cloudRequest('/auth/v1/token?grant_type=refresh_token','POST',{refresh_token:cloudSession.refresh_token},false));}return cloudSession.user.id;}
+async function cloudLogin(register){
+ try{
+ const email=$('#cloudEmail').value.trim(),password=$('#cloudPassword').value;
+ if(!email||password.length<6)throw Error('Inserisci email e password di almeno 6 caratteri');
+ const s=await cloudRequest(register?'/auth/v1/signup':'/auth/v1/token?grant_type=password','POST',{email,password},false);
+ if(!s.access_token){cloudMessage('Controlla la email di conferma, poi accedi.');return;}
+ const bound=localStorage.getItem('cloudOwner');
+ if(bound&&bound!==s.user.id)throw Error('Questo ricettario è già associato a un altro account.');
+ cloudStore(s);localStorage.setItem('cloudOwner',s.user.id);$('#cloudPassword').value='';cloudDialog.close();await cloudSync();
+ }catch(e){cloudMessage(e.message);}
+}
+cloudStatus.onclick=()=>{cloudDialog.showModal();};
+$('#cloudForm').onsubmit=e=>{e.preventDefault();cloudLogin(false);};
+$('#cloudRegister').onclick=()=>cloudLogin(true);
+$('#cloudClose').onclick=()=>cloudDialog.close();
+$('#cloudLogout').onclick=()=>{cloudSession=null;localStorage.removeItem('cloudSession');remoteRecipes=[];cloudDialog.close();cloudMessage('Account e Community');render();};
+async function cloudRefresh(){
+ if(!cloudSession){cloudMessage('Accedi per vedere la Community');return;}
+ try{const uid=await cloudToken();const rows=await cloudRequest('/rest/v1/recipes?select=*,profiles(display_name)&is_public=eq.true&owner_id=neq.'+uid);
+ remoteRecipes=rows.map(r=>({...r.recipe_data,id:'remote_'+r.id,title:r.title,ingredients:r.ingredients,instructions:r.instructions,category:[r.category||'altro'],nutrition:r.nutrition,source_type:'user',visibility:'public',owner_id:r.owner_id,owner_name:r.profiles?.display_name||'Utente',image_data:null}));render();cloudMessage('Community aggiornata');
+ }catch(e){cloudMessage('Community: '+e.message);}
+}
+async function cloudSync(){
+ if(!cloudSession||cloudBusy)return;cloudBusy=true;
+ try{const uid=await cloudToken();
+ await cloudRequest('/rest/v1/profiles?on_conflict=id','POST',{id:uid,display_name:profile.name||'Utente'},true,'resolution=merge-duplicates');
+ const rows=recipes.filter(isMine).map(r=>({owner_id:uid,local_id:r.id,title:r.title,ingredients:r.ingredients||[],instructions:r.instructions||[],category:r.category?.[0],nutrition:r.nutrition,is_public:r.visibility==='public',recipe_data:{servings:r.servings,preparation_minutes:r.preparation_minutes},updated_at:r.updated_at||new Date().toISOString()}));
+ if(rows.length)await cloudRequest('/rest/v1/recipes?on_conflict=owner_id,local_id','POST',rows,true,'resolution=merge-duplicates');
+ await cloudRefresh();
+ }catch(e){cloudMessage('Sincronizzazione: '+e.message);}finally{cloudBusy=false;}
+}
+async function cloudDelete(id){if(!cloudSession)return;try{const uid=await cloudToken();await cloudRequest('/rest/v1/recipes?owner_id=eq.'+uid+'&local_id=eq.'+encodeURIComponent(id),'DELETE');}catch(e){cloudMessage('Eliminazione online non riuscita: '+e.message);}}
+window.addEventListener('online',cloudSync);
+if(cloudSession)cloudSync();
