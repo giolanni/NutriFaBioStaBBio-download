@@ -2,8 +2,10 @@ import os
 import re
 import tempfile
 import time
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,7 +14,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.2.1")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.0")
 
 origins = [
     item.strip()
@@ -34,7 +36,8 @@ INSTAGRAM_PATH = re.compile(r"^/(reel|reels|p)/[A-Za-z0-9_-]+/?", re.I)
 
 
 class AnalyzeRequest(BaseModel):
-    url: str = Field(min_length=20, max_length=500)
+    url: str | None = Field(default=None, max_length=500)
+    caption: str | None = Field(default=None, max_length=20000)
 
 
 class Recipe(BaseModel):
@@ -87,6 +90,138 @@ def download_reel(url: str, directory: Path) -> Path:
         if candidate.exists() and candidate.is_file():
             return candidate
     raise HTTPException(422, "Il Reel non contiene un video analizzabile.")
+
+
+class CaptionMetaParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.meta = {}
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "meta":
+            return
+        values = dict(attrs)
+        key = values.get("property") or values.get("name")
+        if key and values.get("content"):
+            self.meta.setdefault(key, values["content"])
+
+
+def fetch_public_caption(url: str) -> str:
+    request = Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+        "Accept-Language": "it,en;q=0.8",
+    })
+    with urlopen(request, timeout=12) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        page = response.read(2_000_000).decode(charset, "replace")
+    parser = CaptionMetaParser()
+    parser.feed(page)
+    description = (parser.meta.get("og:description") or parser.meta.get("description") or "").strip()
+    if not description:
+        raise ValueError("caption non presente nella pagina pubblica")
+    match = re.match(
+        r'^.*?\b(?:on|il)\s[^:"“]{3,60}:\s*["“](.*)["”]\.?\s*$',
+        description,
+        re.DOTALL,
+    )
+    return (match.group(1) if match else description).strip()
+
+
+CAPTION_INGREDIENTS = re.compile(r"^(ingredienti|ingredients)\b", re.I)
+CAPTION_STEPS = re.compile(
+    r"^(procedimento|preparazione|istruzioni|esecuzione|metodo|come si prepara|"
+    r"directions|instructions|method|steps|preparation)\b", re.I
+)
+CAPTION_NOTES = re.compile(r"^(note|nota|consigli|consiglio|tips?|suggerimenti|conservazione)\b", re.I)
+CAPTION_STEP_NUMBER = re.compile(
+    r"^(?:\d+\s*[.)-]\s*|(?:step|passaggio|fase)\s*\d+\s*[:.)-]?\s*)", re.I
+)
+CAPTION_HASHTAG = re.compile(r"#\w+")
+
+
+def clean_caption_line(value: str) -> str:
+    value = re.sub(r"\s+", " ", value).strip()
+    return re.sub(r"^[^\wÀ-ÿ½¼¾]+", "", value).strip()
+
+
+def split_caption_items(value: str) -> list[str]:
+    return [item.strip() for item in re.split(r"(?<!\d),|,(?!\d)|;|\s+[•·]\s+", value) if item.strip()]
+
+
+def recipe_from_caption(text: str, manual: bool = False) -> Recipe:
+    body = CAPTION_HASHTAG.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
+    sections = {"pre": [], "ingredients": [], "steps": [], "notes": []}
+    current = "pre"
+    servings = None
+
+    for raw in body.split("\n"):
+        line = clean_caption_line(raw)
+        if not line:
+            continue
+        found_header = False
+        for name, pattern in (
+            ("ingredients", CAPTION_INGREDIENTS),
+            ("steps", CAPTION_STEPS),
+            ("notes", CAPTION_NOTES),
+        ):
+            match = pattern.match(line)
+            if not match:
+                continue
+            current = name
+            found_header = True
+            rest = line[match.end():].lstrip(" :–—-")
+            if name == "ingredients":
+                serving_match = re.search(r"(?:per|for|serves|porzioni:?|x)\s*(\d+)", line, re.I)
+                if serving_match:
+                    servings = int(serving_match.group(1))
+                rest = re.sub(
+                    r"^(?:per|for|serves|porzioni:?|x)\s*\d+\s*(?:persone|people|porzioni)?\s*:?\s*",
+                    "",
+                    rest,
+                    flags=re.I,
+                )
+            if rest:
+                sections[name].extend(split_caption_items(rest) if name == "ingredients" else [rest])
+            break
+        if not found_header:
+            sections[current].append(line)
+
+    title = sections["pre"][0].strip(" -–—:*") if sections["pre"] else "Ricetta da Instagram"
+    ingredients = sections["ingredients"]
+    steps = [CAPTION_STEP_NUMBER.sub("", value).strip() for value in sections["steps"]]
+    steps = [value for value in steps if value]
+    notes = sections["notes"]
+
+    if not ingredients and not steps:
+        candidates = sections["pre"][1:]
+        ingredient_pattern = re.compile(
+            r"\b(?:\d+(?:[.,/]\d+)?|q\.?\s*b\.?)\s*"
+            r"(?:kg|g|gr|mg|ml|cl|dl|l|uova?|cucchiai?|cucchiaini?|fette?|spicchi?)?\b",
+            re.I,
+        )
+        ingredients = [value for value in candidates if len(value) <= 80 and ingredient_pattern.search(value)]
+        steps = [value for value in candidates if value not in ingredients and len(value) > 35]
+
+    if not ingredients:
+        raise ValueError("nessun ingrediente riconosciuto nella caption")
+    if not manual and not steps:
+        raise ValueError("caption incompleta: procedimento non riconosciuto")
+
+    if not steps:
+        notes.append("Procedimento non riconosciuto automaticamente: completarlo prima del salvataggio.")
+
+    confidence = "alta (caption)" if steps and len(ingredients) >= 3 else "media (caption manuale)"
+    return Recipe(
+        title=title,
+        category="Altro",
+        time_minutes=None,
+        servings=servings,
+        ingredients=ingredients,
+        steps=steps,
+        calories_per_serving=None,
+        notes=notes,
+        confidence=confidence,
+    )
 
 
 def analysis_error_message(exc: Exception) -> str:
@@ -170,7 +305,28 @@ def health():
 
 @app.post("/analyze", response_model=Recipe)
 def analyze(payload: AnalyzeRequest):
-    url = validate_instagram_url(payload.url)
+    caption = (payload.caption or "").strip()
+    raw_url = (payload.url or "").strip()
+
+    if caption:
+        try:
+            return recipe_from_caption(caption, manual=True)
+        except ValueError as exc:
+            raise HTTPException(
+                422,
+                f"La caption incollata non contiene una ricetta riconoscibile: {exc}",
+            ) from exc
+
+    if not raw_url:
+        raise HTTPException(400, "Inserisci il link Instagram oppure incolla la caption.")
+    url = validate_instagram_url(raw_url)
+
+    try:
+        public_caption = fetch_public_caption(url)
+        return recipe_from_caption(public_caption)
+    except Exception as exc:
+        print(f"Caption fallback: {type(exc).__name__}: {exc}", flush=True)
+
     with tempfile.TemporaryDirectory(prefix="nutrifabio-") as tmp:
         video = download_reel(url, Path(tmp))
         return analyze_video(video)
