@@ -106,6 +106,74 @@ class CaptionMetaParser(HTMLParser):
             self.meta.setdefault(key, values["content"])
 
 
+class EmbedCaptionParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.active = False
+        self.finished = False
+        self.stack = []
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        classes = (dict(attrs).get("class") or "").split()
+        if not self.active:
+            if not self.finished and "Caption" in classes:
+                self.active = True
+                self.stack = [(tag, False)]
+            return
+        skip = self.stack[-1][1] or bool(set(classes) & {"CaptionUsername", "CaptionComments", "CaptionCommentsExpand"})
+        if tag == "br":
+            if not skip:
+                self.parts.append("\n")
+            return
+        if tag not in {"img", "input", "hr", "meta", "link", "wbr", "source", "area", "embed", "param", "col", "base", "track"}:
+            self.stack.append((tag, skip))
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in {"br", "img", "input", "hr", "meta", "link", "wbr", "source", "area", "embed", "param", "col", "base", "track"}:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        if not self.active:
+            return
+        for i in range(len(self.stack) - 1, -1, -1):
+            if self.stack[i][0] == tag:
+                del self.stack[i:]
+                break
+        if not self.stack:
+            self.active = False
+            self.finished = True
+
+    def handle_data(self, data):
+        if self.active and not self.stack[-1][1]:
+            self.parts.append(data)
+
+    def caption(self):
+        return "".join(self.parts).strip()
+
+
+def fetch_embed_caption(url: str) -> str:
+    match = INSTAGRAM_PATH.match(urlparse(url).path)
+    if not match:
+        raise ValueError("link Instagram non valido")
+    path = match.group(0).strip("/").replace("reels/", "reel/", 1)
+    embed_url = f"https://www.instagram.com/{path}/embed/captioned/"
+    request = Request(embed_url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
+    })
+    with urlopen(request, timeout=15) as response:
+        page = response.read(4_000_000).decode(response.headers.get_content_charset() or "utf-8", "replace")
+    parser = EmbedCaptionParser()
+    parser.feed(page)
+    caption = parser.caption()
+    if not caption:
+        raise ValueError("caption non presente nell'embed pubblico")
+    return caption
+
+
 def fetch_public_caption(url: str) -> str:
     request = Request(url, headers={
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
@@ -300,7 +368,18 @@ confidence deve essere una tra: alta, media, bassa.
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "engine": "gemini-free"}
+    return {"status": "ok", "engine": "gemini-free", "caption_engine": "embed-captioned-v1"}
+
+
+@app.post("/caption")
+def read_caption(payload: AnalyzeRequest):
+    url = validate_instagram_url(payload.url or "")
+    for fetcher in (fetch_embed_caption, fetch_public_caption):
+        try:
+            return {"caption": fetcher(url), "source": fetcher.__name__}
+        except Exception as exc:
+            print(f"Caption test ({fetcher.__name__}): {type(exc).__name__}: {exc}", flush=True)
+    raise HTTPException(422, "Caption pubblica non accessibile.")
 
 
 @app.post("/analyze", response_model=Recipe)
@@ -321,11 +400,13 @@ def analyze(payload: AnalyzeRequest):
         raise HTTPException(400, "Inserisci il link Instagram oppure incolla la caption.")
     url = validate_instagram_url(raw_url)
 
-    try:
-        public_caption = fetch_public_caption(url)
-        return recipe_from_caption(public_caption)
-    except Exception as exc:
-        print(f"Caption fallback: {type(exc).__name__}: {exc}", flush=True)
+    for fetcher in (fetch_embed_caption, fetch_public_caption):
+        try:
+            public_caption = fetcher(url)
+            print(f"Caption retrieved: {fetcher.__name__}, {len(public_caption)} chars", flush=True)
+            return recipe_from_caption(public_caption)
+        except Exception as exc:
+            print(f"Caption fallback ({fetcher.__name__}): {type(exc).__name__}: {exc}", flush=True)
 
     with tempfile.TemporaryDirectory(prefix="nutrifabio-") as tmp:
         video = download_reel(url, Path(tmp))
