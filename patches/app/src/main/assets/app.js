@@ -62,7 +62,12 @@ function parseIngredient(line){
 function openAddChoice(){ $('#addChoice').showModal(); }
 function openInstagramImporter(){
   $('#addChoice').close();
-  Android.openInstagramImporter();
+  const page = 'https://giolanni.github.io/NutriFaBioStaBBio-download/analizza.html';
+  if (window.Android && typeof Android.openInstagramImporter === 'function') {
+    Android.openInstagramImporter();
+  } else {
+    window.location.href = page;
+  }
 }
 function openEditor(id=''){
   const r = id ? recipes.find(x => x.id === id && isMine(x)) : null;
