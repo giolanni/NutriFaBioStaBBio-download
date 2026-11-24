@@ -17,8 +17,8 @@ android {
         applicationId = "it.nutrifabio.stabbio.v12"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.4.1-prototype"
+        versionCode = 10
+        versionName = "1.4.2-prototype"
     }
 
     compileOptions {
