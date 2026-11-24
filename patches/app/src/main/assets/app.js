@@ -107,7 +107,6 @@ function parseIg(){
   $('#editInstructions').value=steps.join('\n');
   if(!ingredients.length || !steps.length) alert('Ricetta parziale: completa i campi mancanti dalla caption prima di salvare.');
 }
-
 function openEditor(id=''){
   const r = id ? recipes.find(x => x.id === id && isMine(x)) : null;
   $('#recipeForm').reset(); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
