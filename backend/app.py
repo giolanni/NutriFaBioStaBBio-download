@@ -12,7 +12,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.2.0")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.2.1")
 
 origins = [
     item.strip()
@@ -89,6 +89,21 @@ def download_reel(url: str, directory: Path) -> Path:
     raise HTTPException(422, "Il Reel non contiene un video analizzabile.")
 
 
+def analysis_error_message(exc: Exception) -> str:
+    raw = " ".join(str(exc).split())
+    lowered = raw.lower()
+    if "429" in lowered or "resource_exhausted" in lowered or "quota" in lowered:
+        return "Il limite gratuito di Gemini è stato raggiunto. Attendi il ripristino della quota oppure usa una nuova chiave gratuita."
+    if "401" in lowered or "403" in lowered or "api key" in lowered or "permission_denied" in lowered:
+        return "La chiave Gemini non è valida o non dispone dei permessi necessari. Controlla GEMINI_API_KEY su Render."
+    if "404" in lowered or "not found" in lowered or "model" in lowered and "support" in lowered:
+        return "Il modello Gemini configurato non è disponibile per questa chiave."
+    if "json" in lowered or "validation" in lowered:
+        return "Gemini ha risposto, ma la ricetta restituita non era nel formato previsto."
+    detail = raw[:280] if raw else type(exc).__name__
+    return f"Errore Gemini ({type(exc).__name__}): {detail}"
+
+
 def analyze_video(video_path: Path) -> Recipe:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -138,10 +153,8 @@ confidence deve essere una tra: alta, media, bassa.
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            502,
-            "L’analisi gratuita non è riuscita. Attendi qualche minuto e riprova.",
-        ) from exc
+        print(f"Gemini analysis failed: {type(exc).__name__}: {exc}", flush=True)
+        raise HTTPException(502, analysis_error_message(exc)) from exc
     finally:
         if uploaded and uploaded.name:
             try:
