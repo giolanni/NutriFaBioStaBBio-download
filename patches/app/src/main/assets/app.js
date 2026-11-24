@@ -10,7 +10,7 @@ const norm = s => String(s || '').toLocaleLowerCase('it');
 const slug = s => norm(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'') || 'utente';
 const stored = JSON.parse(localStorage.getItem('recipes') || 'null');
 let recipes = (stored || sample).map(r => ({...r,source_type:r.source_type || 'catalog',visibility:r.visibility || 'public',owner_id:r.owner_id || 'catalog',owner_name:r.owner_name || r.source?.author || 'Nutri Fabio Stabbio'}));
-let profile = JSON.parse(localStorage.getItem('profile') || 'null') || {id:'utente_giovanni',name:'Giovanni'};
+let profile = JSON.parse(localStorage.getItem('profile') || 'null') || {id:'utente_'+Date.now(),name:''};
 let active = 'Tutte', view = 'home';
 const cats = ['Tutte','Primo','Secondo','Pasto completo','Dolce','Altro'];
 
@@ -133,7 +133,7 @@ function deleteRecipe(id){
   recipes = recipes.filter(x => x.id !== id); persist(); $('#detail').close(); render();
 }
 function openProfile(){ $('#profileName').value = profile.name; $('#profileDialog').showModal(); }
-function saveProfile(event){ event.preventDefault(); const name = $('#profileName').value.trim(); if (!name) return; profile = {id:`utente_${slug(name)}`,name}; localStorage.setItem('profile',JSON.stringify(profile)); $('#profileDialog').close(); updateProfile(); setView('home'); }
+function saveProfile(event){ event.preventDefault(); const name = $('#profileName').value.trim(); if (!name) return; profile = {id:profile.id,name}; localStorage.setItem('profile',JSON.stringify(profile)); $('#profileDialog').close(); updateProfile(); setView('home'); }
 function updateProfile(){ $('#profileButton').innerHTML = `<span>${esc(profile.name.charAt(0).toUpperCase())}</span><small>${esc(profile.name)}</small>`; }
 
 window.NutriApp = {captionResult, importPackage(raw){
@@ -145,3 +145,5 @@ window.NutriApp = {captionResult, importPackage(raw){
 }};
 
 $('#q').addEventListener('input',render); updateProfile(); setView('home');
+
+if (!profile.name) { openProfile(); $('#profileDialog').addEventListener('cancel', e=>{if(!profile.name)e.preventDefault();}); }
