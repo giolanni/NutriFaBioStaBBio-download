@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: nutrifabiostabbio-api
+    runtime: docker
+    rootDir: backend
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_RECIPE_MODEL
+        value: gpt-5-mini
+      - key: OPENAI_TRANSCRIBE_MODEL
+        value: gpt-4o-mini-transcribe
+      - key: ALLOWED_ORIGINS
+        value: https://giolanni.github.io
