@@ -103,18 +103,22 @@ function parseIg(){
     const h=line.match(/^(ingredienti|ingredients|procedimento|preparazione|istruzioni|directions|steps|note|consigli)\b\s*[:–-]?\s*/i);
     if(h){section=/^(ingredienti|ingredients)$/i.test(h[1])?'i':/^(note|consigli)$/i.test(h[1])?'n':'s';line=line.slice(h[0].length).trim();}
     if(!line) continue;
-    if(section==='i') ingredients.push(line);
+    const action=/^(?:per (?:prima cosa|iniziare)\b|inizia\b|taglia\b|cuoci\b|versa\b|mescola\b|scalda\b|prepara\b|scola\b|unisci\b|aggiungi\b|metti\b|in una padella\b|porta a bollore\b|friggi\b|servi\b|tampona\b|asciuga\b|fai\b|prendi\b|passa\b|nel frattempo\b)/i;
+    if(section!=='n' && action.test(line)){section='s';steps.push(line);}
+    else if(section==='i') ingredients.push(line);
     else if(section==='s') steps.push(line);
     else if(!section && /^\d+(?:[.,/]\d+)?\s*(?:g|kg|ml|l|uova|cucchiai|cucchiaini)\b/i.test(line)) ingredients.push(line);
   }
+  if(!steps.length){for(const line of lines.slice(1)){if(/\b(?:cuoci|versa|mescola|scalda|taglia|aggiungi|servi|padella|bollore)\b/i.test(line)&&!ingredients.includes(line))steps.push(line);}}
   $('#igDialog').close(); openEditor();
   $('#editTitle').value=title.slice(0,100);
   $('#editIngredients').value=ingredients.join('\n');
   $('#editInstructions').value=steps.join('\n');
-  if(!ingredients.length || !steps.length) alert('Ricetta parziale: completa i campi mancanti dalla caption prima di salvare.');
+  if(!ingredients.length || !steps.length){const missing=[!ingredients.length?'ingredienti':'',!steps.length?'procedimento':''].filter(Boolean).join(' e ');let note=document.getElementById('importNote');if(!note){note=document.createElement('div');note.id='importNote';$('#editorTitle').after(note);}note.textContent='Da completare: '+missing+'. Caption originale disponibile qui sotto.';const original=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Caption originale';original.append(summary,document.createTextNode(lines.join('\n')));note.append(original);}
 }
 let editorImage=null;
 function openEditor(id=''){
+  document.getElementById('importNote')?.remove();
   const r = id ? recipes.find(x => x.id === id && isMine(x)) : null;
   editorImage=r?.image_data||null; $('#recipeForm').reset(); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
   if (r) {
