@@ -16,7 +16,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.4")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.5")
 
 origins = [
     item.strip()
@@ -377,8 +377,11 @@ confidence deve essere una tra: alta, media, bassa.
             models.remove("gemini-2.5-flash")
             if "gemini-3.1-flash-lite" not in models:
                 models.append("gemini-3.1-flash-lite")
+        if models == ["gemini-3.8-flash", "gemini-3.1-flash-lite"]:
+            models.reverse()
         last_error = None
         for model in models:
+            started = time.monotonic()
             try:
                 if model.removeprefix("models/").startswith("gemini-2."):
                     response = client.models.generate_content(
@@ -399,6 +402,9 @@ confidence deve essere una tra: alta, media, bassa.
                             "mime_type": "application/json",
                             "schema": Recipe.model_json_schema(),
                         },
+                        generation_config={"thinking_level": "low"} if model in (
+                            "gemini-3.8-flash", "gemini-3.1-flash-lite"
+                        ) else None,
                         store=False,
                         timeout=55,
                     )
@@ -415,7 +421,11 @@ confidence deve essere una tra: alta, media, bassa.
                 raise
             except Exception as exc:
                 code = provider_status(exc)
-                print(f"Gemini generation failed ({model}): {type(exc).__name__} {code}", flush=True)
+                print(
+                    f"Gemini generation failed ({model}) after {time.monotonic() - started:.1f}s: "
+                    f"{type(exc).__name__} {code}",
+                    flush=True,
+                )
                 if code in (401, 403):
                     raise
                 if last_error is None or code != 404:
