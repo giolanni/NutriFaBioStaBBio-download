@@ -15,7 +15,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.2")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.3")
 
 origins = [
     item.strip()
@@ -298,6 +298,11 @@ def recipe_from_caption(text: str, manual: bool = False) -> Recipe:
     )
 
 
+def provider_status(exc: Exception) -> int | None:
+    code = getattr(exc, "code", None)
+    return code if isinstance(code, int) else getattr(exc, "status_code", None)
+
+
 def analysis_error_message(exc: Exception) -> str:
     raw = " ".join(str(exc).split())
     lowered = raw.lower()
@@ -309,6 +314,8 @@ def analysis_error_message(exc: Exception) -> str:
         return "Gemini non ha trovato il modello o il file video per l’analisi. Riprova tra poco."
     if "json" in lowered or "validation" in lowered:
         return "Gemini ha risposto, ma la ricetta restituita non era nel formato previsto."
+    if provider_status(exc) in (500, 502, 503, 504) or type(exc).__name__ == "InternalServerError":
+        return "Gemini ha riscontrato un errore interno durante l’analisi del Reel."
     return "Gemini non ha completato l’analisi del video. Riprova tra poco."
 
 
@@ -346,9 +353,15 @@ confidence deve essere una tra: alta, media, bassa.
         video = {"type": "video", "uri": uploaded.uri, "mime_type": uploaded.mime_type}
         configured_models = [
             os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
-            os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash"),
+            os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.1-flash-lite"),
         ]
-        models = list(dict.fromkeys(model for model in configured_models if model))
+        models = list(dict.fromkeys(
+            model.strip().removeprefix("models/") for model in configured_models if model.strip()
+        ))
+        if "gemini-2.5-flash" in models:
+            models.remove("gemini-2.5-flash")
+            if "gemini-3.1-flash-lite" not in models:
+                models.append("gemini-3.1-flash-lite")
         last_error = None
         for model in models:
             try:
@@ -385,9 +398,9 @@ confidence deve essere una tra: alta, media, bassa.
             except HTTPException:
                 raise
             except Exception as exc:
-                code = getattr(exc, "code", None)
+                code = provider_status(exc)
                 print(f"Gemini generation failed ({model}): {type(exc).__name__} {code}", flush=True)
-                if code in (401, 403, 429):
+                if code in (401, 403):
                     raise
                 if last_error is None or code != 404:
                     last_error = exc
@@ -396,7 +409,7 @@ confidence deve essere una tra: alta, media, bassa.
     except HTTPException:
         raise
     except Exception as exc:
-        print(f"Gemini analysis failed: {type(exc).__name__} {getattr(exc, 'code', None)}", flush=True)
+        print(f"Gemini analysis failed: {type(exc).__name__} {provider_status(exc)}", flush=True)
         raise HTTPException(502, analysis_error_message(exc)) from exc
     finally:
         if uploaded and uploaded.name:
