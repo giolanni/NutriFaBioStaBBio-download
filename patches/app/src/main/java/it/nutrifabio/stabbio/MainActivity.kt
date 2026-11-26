@@ -101,7 +101,7 @@ class MainActivity : Activity() {
                         connection.readTimeout = 240000
                         connection.doOutput = true
                         connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                        val body = JSONObject().put("url", url).put("caption", caption)
+                        val body = JSONObject().put("url", url).put("caption", caption).put("include_cover", true)
                         connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
                         val status = connection.responseCode
                         val stream = if (status == 200) connection.inputStream else connection.errorStream

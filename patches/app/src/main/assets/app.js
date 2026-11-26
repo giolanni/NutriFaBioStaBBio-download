@@ -116,7 +116,7 @@ function parseIg(){
   }
   if(!steps.length){for(const line of lines.slice(1)){if(/\b(?:cuoci|versa|mescola|scalda|taglia|aggiungi|servi|padella|bollore)\b/i.test(line)&&!ingredients.includes(line))steps.push(line);}}
   const draft = {title, ingredients, steps};
-  if ((!ingredients.length || !steps.length) && url) {
+  if (url) {
     if (!window.Android?.analyzeInstagram) {
       $('#igStatus').textContent = 'Analisi video non disponibile. Puoi provare il servizio web.';
       return;
@@ -124,7 +124,9 @@ function parseIg(){
     igPending = {id: ++igAnalysisId, draft, caption};
     $('#igAnalyze').disabled = true;
     $('#igFetch').disabled = true;
-    $('#igStatus').textContent = 'Sto analizzando audio e immagini del Reel…';
+    $('#igStatus').textContent = ingredients.length && steps.length
+      ? 'Sto cercando una foto nel Reel…'
+      : 'Sto analizzando il Reel e cercando una foto…';
     Android.analyzeInstagram(url, caption, igPending.id);
     return;
   }
@@ -140,7 +142,8 @@ function analysisResult(id, raw) {
   if (!$('#igDialog').open) return;
   const {recipe, error} = JSON.parse(raw);
   if (recipe) {
-    showInstagramDraft(recipe, caption);
+    const captionComplete = draft.ingredients.length && draft.steps.length;
+    showInstagramDraft(captionComplete ? {...draft, image_data: recipe.image_data} : recipe, caption);
   } else if (draft.ingredients.length || draft.steps.length) {
     showInstagramDraft({...draft, notes: [error]}, caption);
   } else {
@@ -151,6 +154,7 @@ function analysisResult(id, raw) {
 function showInstagramDraft(recipe, caption) {
   $('#igDialog').close();
   openEditor();
+  setEditorImage(recipe.image_data);
   $('#editTitle').value = recipe.title.slice(0,100);
   $('#editIngredients').value = recipe.ingredients.join('\n');
   $('#editInstructions').value = recipe.steps.join('\n');
@@ -178,7 +182,7 @@ let editorImage=null;
 function openEditor(id=''){
   document.getElementById('importNote')?.remove();
   const r = id ? recipes.find(x => x.id === id && isMine(x)) : null;
-  editorImage=r?.image_data||null; $('#recipeForm').reset(); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
+  $('#recipeForm').reset(); setEditorImage(r?.image_data); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
   if (r) {
     $('#editTitle').value = r.title || ''; $('#editCategory').value = (r.category || ['Altro'])[0].replace(/^./, c => c.toUpperCase()); $('#editMinutes').value = r.preparation_minutes || '';
     $('#editIngredients').value = (r.ingredients || []).map(i => [i.quantity,i.unit,i.name].filter(v => v !== '' && v != null).join(' ')).join('\n');
@@ -299,5 +303,22 @@ window.addEventListener('focus',cloudSync);
 const imageInput=document.createElement('input');
 imageInput.type='file';imageInput.accept='image/*';
 const imageLabel=document.createElement('label');imageLabel.textContent='Foto della ricetta';imageLabel.append(imageInput);
+const imagePreview = document.createElement('img');
+imagePreview.alt = 'Anteprima della foto della ricetta';
+imagePreview.hidden = true;
+imagePreview.style.maxWidth = '100%';
+imagePreview.style.maxHeight = '240px';
+const removeImage = document.createElement('button');
+removeImage.type = 'button';
+removeImage.textContent = 'Rimuovi foto';
+removeImage.hidden = true;
+removeImage.onclick = () => { imageInput.value = ''; setEditorImage(null); };
+imageLabel.append(imagePreview, removeImage);
 $('#recipeForm').prepend(imageLabel);
-imageInput.onchange=async()=>{try{const file=imageInput.files[0];if(!file)return;const img=new Image();const url=URL.createObjectURL(file);try{img.src=url;await img.decode();const canvas=document.createElement('canvas');const scale=Math.min(1,640/Math.max(img.width,img.height));canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);editorImage=validImage(canvas.toDataURL('image/jpeg',0.65));if(!editorImage)throw Error('Foto troppo grande');}finally{URL.revokeObjectURL(url);}}catch(e){alert(e.message);}};
+function setEditorImage(value) {
+  editorImage = validImage(value);
+  imagePreview.hidden = removeImage.hidden = !editorImage;
+  if (editorImage) imagePreview.src = editorImage;
+  else imagePreview.removeAttribute('src');
+}
+imageInput.onchange=async()=>{try{const file=imageInput.files[0];if(!file)return;const img=new Image();const url=URL.createObjectURL(file);try{img.src=url;await img.decode();const canvas=document.createElement('canvas');const scale=Math.min(1,640/Math.max(img.width,img.height));canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);const photo=validImage(canvas.toDataURL('image/jpeg',0.65));if(!photo)throw Error('Foto troppo grande');setEditorImage(photo);}finally{URL.revokeObjectURL(url);}}catch(e){alert(e.message);}};
