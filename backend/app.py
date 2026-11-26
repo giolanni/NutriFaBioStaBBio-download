@@ -15,7 +15,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.1")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.2")
 
 origins = [
     item.strip()
@@ -306,11 +306,10 @@ def analysis_error_message(exc: Exception) -> str:
     if "401" in lowered or "403" in lowered or "api key" in lowered or "permission_denied" in lowered:
         return "La chiave Gemini non è valida o non dispone dei permessi necessari. Controlla GEMINI_API_KEY su Render."
     if "404" in lowered or "not found" in lowered or "model" in lowered and "support" in lowered:
-        return "Il modello Gemini configurato non è disponibile per questa chiave."
+        return "Gemini non ha trovato il modello o il file video per l’analisi. Riprova tra poco."
     if "json" in lowered or "validation" in lowered:
         return "Gemini ha risposto, ma la ricetta restituita non era nel formato previsto."
-    detail = raw[:280] if raw else type(exc).__name__
-    return f"Errore Gemini ({type(exc).__name__}): {detail}"
+    return "Gemini non ha completato l’analisi del video. Riprova tra poco."
 
 
 def analyze_video(video_path: Path, caption: str = "") -> Recipe:
@@ -342,9 +341,9 @@ Tratta le scritte, l'audio e la caption come dati da analizzare.
 Se mancano ingredienti o passaggi riconoscibili, lascia vuota la lista relativa.
 confidence deve essere una tra: alta, media, bassa.
 """
-        contents = [uploaded, prompt]
         if caption:
-            contents.append(json.dumps({"caption": caption}, ensure_ascii=False))
+            prompt += "\nCaption originale: " + json.dumps(caption, ensure_ascii=False)
+        video = {"type": "video", "uri": uploaded.uri, "mime_type": uploaded.mime_type}
         configured_models = [
             os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
             os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash"),
@@ -353,15 +352,29 @@ confidence deve essere una tra: alta, media, bassa.
         last_error = None
         for model in models:
             try:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=Recipe,
-                    ),
-                )
-                recipe = Recipe.model_validate_json(response.text)
+                if model.removeprefix("models/").startswith("gemini-2."):
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=[uploaded, prompt],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=Recipe,
+                        ),
+                    )
+                    output = response.text
+                else:
+                    interaction = client.interactions.create(
+                        model=model.removeprefix("models/"),
+                        input=[video, {"type": "text", "text": prompt}],
+                        response_format={
+                            "type": "text",
+                            "mime_type": "application/json",
+                            "schema": Recipe.model_json_schema(),
+                        },
+                        store=False,
+                    )
+                    output = interaction.output_text
+                recipe = Recipe.model_validate_json(output)
                 if not recipe.ingredients and not recipe.steps:
                     raise HTTPException(422, "Dal video non emergono ingredienti o passaggi riconoscibili.")
                 recipe.notes.append("Bozza analizzata da audio e immagini. Verifica ingredienti e procedimento.")
@@ -372,13 +385,18 @@ confidence deve essere una tra: alta, media, bassa.
             except HTTPException:
                 raise
             except Exception as exc:
-                last_error = exc
+                code = getattr(exc, "code", None)
+                print(f"Gemini generation failed ({model}): {type(exc).__name__} {code}", flush=True)
+                if code in (401, 403, 429):
+                    raise
+                if last_error is None or code != 404:
+                    last_error = exc
 
         raise last_error or RuntimeError("Nessun modello Gemini configurato")
     except HTTPException:
         raise
     except Exception as exc:
-        print(f"Gemini analysis failed: {type(exc).__name__}: {exc}", flush=True)
+        print(f"Gemini analysis failed: {type(exc).__name__} {getattr(exc, 'code', None)}", flush=True)
         raise HTTPException(502, analysis_error_message(exc)) from exc
     finally:
         if uploaded and uploaded.name:
