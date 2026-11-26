@@ -92,11 +92,16 @@ function captionResult(raw){
   $('#igCaption').value = caption;
   $('#igStatus').textContent = 'Caption recuperata! Controlla il testo e premi Analizza.';
 }
+let igAnalysisId = 0;
+let igPending = null;
 function parseIg(){
+  if (igPending) return;
+  const url = $('#igUrl').value.trim();
+  const caption = $('#igCaption').value.trim();
   const lines = $('#igCaption').value.split(/\r?\n/).map(x=>x.replace(/#\S+/g,'').trim()).filter(Boolean);
-  if (!lines.length) { $('#igStatus').textContent = 'Inserisci una caption.'; return; }
+  if (!lines.length && !url) { $('#igStatus').textContent = 'Inserisci il link Instagram o una caption.'; return; }
   const ingredients=[], steps=[];
-  let section='', title=lines[0];
+  let section='', title=lines[0] || 'Ricetta da Instagram';
   for (const raw of lines.slice(1)){
     let line=raw.replace(/^[^\p{L}\p{N}]+/u,'').trim();
     if (!line) continue;
@@ -110,11 +115,64 @@ function parseIg(){
     else if(!section && /^\d+(?:[.,/]\d+)?\s*(?:g|kg|ml|l|uova|cucchiai|cucchiaini)\b/i.test(line)) ingredients.push(line);
   }
   if(!steps.length){for(const line of lines.slice(1)){if(/\b(?:cuoci|versa|mescola|scalda|taglia|aggiungi|servi|padella|bollore)\b/i.test(line)&&!ingredients.includes(line))steps.push(line);}}
-  $('#igDialog').close(); openEditor();
-  $('#editTitle').value=title.slice(0,100);
-  $('#editIngredients').value=ingredients.join('\n');
-  $('#editInstructions').value=steps.join('\n');
-  if(!ingredients.length || !steps.length){const missing=[!ingredients.length?'ingredienti':'',!steps.length?'procedimento':''].filter(Boolean).join(' e ');let note=document.getElementById('importNote');if(!note){note=document.createElement('div');note.id='importNote';$('#editorTitle').after(note);}note.textContent='Da completare: '+missing+'. Caption originale disponibile qui sotto.';const original=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Caption originale';original.append(summary,document.createTextNode(lines.join('\n')));note.append(original);}
+  const draft = {title, ingredients, steps};
+  if ((!ingredients.length || !steps.length) && url) {
+    if (!window.Android?.analyzeInstagram) {
+      $('#igStatus').textContent = 'Analisi video non disponibile. Puoi provare il servizio web.';
+      return;
+    }
+    igPending = {id: ++igAnalysisId, draft, caption};
+    $('#igAnalyze').disabled = true;
+    $('#igFetch').disabled = true;
+    $('#igStatus').textContent = 'Sto analizzando audio e immagini del Reel…';
+    Android.analyzeInstagram(url, caption, igPending.id);
+    return;
+  }
+  showInstagramDraft(draft, caption);
+}
+
+function analysisResult(id, raw) {
+  if (igPending?.id !== id) return;
+  const {draft, caption} = igPending;
+  igPending = null;
+  $('#igAnalyze').disabled = false;
+  $('#igFetch').disabled = false;
+  if (!$('#igDialog').open) return;
+  const {recipe, error} = JSON.parse(raw);
+  if (recipe) {
+    showInstagramDraft(recipe, caption);
+  } else if (draft.ingredients.length || draft.steps.length) {
+    showInstagramDraft({...draft, notes: [error]}, caption);
+  } else {
+    $('#igStatus').textContent = error;
+  }
+}
+
+function showInstagramDraft(recipe, caption) {
+  $('#igDialog').close();
+  openEditor();
+  $('#editTitle').value = recipe.title.slice(0,100);
+  $('#editIngredients').value = recipe.ingredients.join('\n');
+  $('#editInstructions').value = recipe.steps.join('\n');
+  if (recipe.servings != null) $('#editServings').value = recipe.servings;
+  if (recipe.time_minutes != null) $('#editMinutes').value = recipe.time_minutes;
+  if (recipe.calories_per_serving != null) $('#editCalories').value = recipe.calories_per_serving;
+  const missing = [!recipe.ingredients.length && 'ingredienti', !recipe.steps.length && 'procedimento']
+    .filter(Boolean).join(' e ');
+  if (missing || recipe.notes?.length) {
+    const note = document.createElement('div');
+    note.id = 'importNote';
+    note.textContent = [missing && ('Da completare: ' + missing + '.'), ...(recipe.notes || [])]
+      .filter(Boolean).join(' ');
+    if (caption) {
+      const original = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = 'Caption originale';
+      original.append(summary, document.createTextNode(caption));
+      note.append(original);
+    }
+    $('#editorTitle').after(note);
+  }
 }
 let editorImage=null;
 function openEditor(id=''){
@@ -144,7 +202,14 @@ function openProfile(){ $('#profileName').value = profile.name; $('#profileDialo
 function saveProfile(event){ event.preventDefault(); const name = $('#profileName').value.trim(); if (!name) return; profile = {id:profile.id,name}; localStorage.setItem('profile',JSON.stringify(profile)); $('#profileDialog').close(); updateProfile(); setView('home'); cloudSync(); }
 function updateProfile(){ $('#profileButton').innerHTML = `<span>${esc(profile.name.charAt(0).toUpperCase())}</span><small>${esc(profile.name)}</small>`; }
 
-window.NutriApp = {captionResult, importPackage(raw){
+$('#igDialog').addEventListener('close', () => {
+  if (!$('#igDialog').open && igPending) {
+    igPending = null;
+    $('#igAnalyze').disabled = false;
+    $('#igFetch').disabled = false;
+  }
+});
+window.NutriApp = {captionResult, analysisResult, importPackage(raw){
   try {
     const p = JSON.parse(raw), incoming = Array.isArray(p) ? p : (p.recipes || []), map = new Map(recipes.map(r => [r.id,r]));
     incoming.forEach(r => { const old = map.get(r.id); if (old?.source_type === 'user') return; map.set(r.id,{...r,source_type:'catalog',visibility:'public',owner_id:'catalog',owner_name:r.source?.author || 'Nutri Fabio Stabbio'}); });

@@ -89,6 +89,42 @@ class MainActivity : Activity() {
             }.start()
         }
 
+        @JavascriptInterface fun analyzeInstagram(url: String, caption: String, requestId: Int) {
+            Thread {
+                val result = try {
+                    val connection = java.net.URL("https://nutrifabiostabbio-api.onrender.com/analyze")
+                        .openConnection() as java.net.HttpURLConnection
+                    try {
+                        connection.requestMethod = "POST"
+                        connection.instanceFollowRedirects = false
+                        connection.connectTimeout = 20000
+                        connection.readTimeout = 240000
+                        connection.doOutput = true
+                        connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        val body = JSONObject().put("url", url).put("caption", caption)
+                        connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                        val status = connection.responseCode
+                        val stream = if (status == 200) connection.inputStream else connection.errorStream
+                        val data = stream?.bufferedReader(Charsets.UTF_8)?.use { JSONObject(it.readText()) }
+                        if (status == 200 && data != null) JSONObject().put("recipe", data)
+                        else JSONObject().put("error", data?.optString("detail")?.takeIf { it.isNotBlank() }
+                            ?: "Servizio video non disponibile (HTTP $status).")
+                    } finally {
+                        connection.disconnect()
+                    }
+                } catch (e: java.net.SocketTimeoutException) {
+                    JSONObject().put("error", "Il servizio video ha impiegato troppo tempo. Riprova.")
+                } catch (e: Exception) {
+                    JSONObject().put("error", "Connessione al servizio video non riuscita.")
+                }
+                runOnUiThread {
+                    web.evaluateJavascript(
+                        "window.NutriApp.analysisResult($requestId," + JSONObject.quote(result.toString()) + ")", null
+                    )
+                }
+            }.start()
+        }
+
         @JavascriptInterface fun choosePackage() = runOnUiThread {
             val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
