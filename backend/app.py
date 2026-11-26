@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import re
@@ -15,7 +16,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.3")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.4")
 
 origins = [
     item.strip()
@@ -314,6 +315,8 @@ def analysis_error_message(exc: Exception) -> str:
         return "Gemini non ha trovato il modello o il file video per l’analisi. Riprova tra poco."
     if "json" in lowered or "validation" in lowered:
         return "Gemini ha risposto, ma la ricetta restituita non era nel formato previsto."
+    if isinstance(exc, TimeoutError) or "timeout" in type(exc).__name__.lower():
+        return "Gemini non ha risposto entro il tempo previsto per l’analisi."
     if provider_status(exc) in (500, 502, 503, 504) or type(exc).__name__ == "InternalServerError":
         return "Gemini ha riscontrato un errore interno durante l’analisi del Reel."
     return "Gemini non ha completato l’analisi del video. Riprova tra poco."
@@ -325,17 +328,30 @@ def analyze_video(video_path: Path, caption: str = "") -> Recipe:
         raise HTTPException(503, "Il servizio gratuito non è ancora configurato.")
 
     client = genai.Client(api_key=api_key)
+    uses_legacy_model = any(
+        model.startswith("gemini-2.") and model != "gemini-2.5-flash"
+        for model in (
+            os.getenv(key, "").strip().removeprefix("models/")
+            for key in ("GEMINI_MODEL", "GEMINI_FALLBACK_MODEL")
+        )
+    )
     uploaded = None
     try:
-        uploaded = client.files.upload(file=str(video_path))
-        deadline = time.monotonic() + 180
-        while not uploaded.state or uploaded.state.name != "ACTIVE":
-            if uploaded.state and uploaded.state.name == "FAILED":
-                raise RuntimeError("Elaborazione video fallita")
-            if time.monotonic() > deadline:
-                raise TimeoutError("Elaborazione video scaduta")
-            time.sleep(3)
-            uploaded = client.files.get(name=uploaded.name)
+        if video_path.suffix.lower() == ".mp4" and video_path.stat().st_size <= 12_000_000 and not uses_legacy_model:
+            video = {"type": "video", "mime_type": "video/mp4",
+                     "data": base64.b64encode(video_path.read_bytes()).decode("ascii")}
+        else:
+            uploaded = client.files.upload(file=str(video_path))
+            deadline = time.monotonic() + 35
+            while not uploaded.state or uploaded.state.name != "ACTIVE":
+                if uploaded.state and uploaded.state.name == "FAILED":
+                    raise RuntimeError("Elaborazione video fallita")
+                if time.monotonic() > deadline:
+                    raise TimeoutError("Elaborazione video scaduta")
+                time.sleep(3)
+                uploaded = client.files.get(name=uploaded.name)
+
+            video = {"type": "video", "uri": uploaded.uri, "mime_type": uploaded.mime_type}
 
         prompt = """
 Analizza attentamente immagini, scritte in sovrimpressione e audio di questo
@@ -350,7 +366,6 @@ confidence deve essere una tra: alta, media, bassa.
 """
         if caption:
             prompt += "\nCaption originale: " + json.dumps(caption, ensure_ascii=False)
-        video = {"type": "video", "uri": uploaded.uri, "mime_type": uploaded.mime_type}
         configured_models = [
             os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
             os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.1-flash-lite"),
@@ -385,6 +400,7 @@ confidence deve essere una tra: alta, media, bassa.
                             "schema": Recipe.model_json_schema(),
                         },
                         store=False,
+                        timeout=55,
                     )
                     output = interaction.output_text
                 recipe = Recipe.model_validate_json(output)
