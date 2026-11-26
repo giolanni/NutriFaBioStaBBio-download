@@ -24,6 +24,7 @@
 <h2>Ricetta estratta</h2>
 <p class="hint">Controlla e correggi i dati prima di salvarli.</p>
 <label for="title">Titolo</label><input id="title">
+<label for="author">Autore</label><input id="author" maxlength="100" placeholder="Es. @nomeaccount">
 <div class="grid">
 <div><label for="category">Categoria</label><input id="category"></div>
 <div><label for="time">Tempo (minuti)</label><input id="time" type="number" min="0"></div>
@@ -52,7 +53,7 @@ el('analyze').addEventListener('click',async()=>{
   const response=await fetch(API_URL+'/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url||null,caption:caption||null})});
   const data=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(data.detail||'Il servizio non ha completato l’analisi.');
-  value('title',data.title);value('category',data.category);value('time',data.time_minutes);value('servings',data.servings);
+  value('title',data.title);value('author',data.author);value('category',data.category);value('time',data.time_minutes);value('servings',data.servings);
   value('calories',data.calories_per_serving);value('ingredients',(data.ingredients||[]).join('\n'));
   value('steps',(data.steps||[]).join('\n'));value('notes',(data.notes||[]).join('\n'));
   el('confidence').textContent='Affidabilità dell’estrazione: '+(data.confidence||'non indicata');
@@ -63,7 +64,7 @@ el('analyze').addEventListener('click',async()=>{
  }finally{el('analyze').disabled=false}
 });
 el('download').addEventListener('click',()=>{
- const recipe={title:el('title').value.trim(),category:el('category').value.trim(),time_minutes:Number(el('time').value)||null,servings:Number(el('servings').value)||null,calories_per_serving:Number(el('calories').value)||null,ingredients:el('ingredients').value.split('\n').map(x=>x.trim()).filter(Boolean),steps:el('steps').value.split('\n').map(x=>x.trim()).filter(Boolean),notes:el('notes').value.split('\n').map(x=>x.trim()).filter(Boolean),source_url:el('url').value.trim(),visibility:'private'};
+ const recipe={title:el('title').value.trim(),author:el('author').value.trim()||null,category:el('category').value.trim(),time_minutes:Number(el('time').value)||null,servings:Number(el('servings').value)||null,calories_per_serving:Number(el('calories').value)||null,ingredients:el('ingredients').value.split('\n').map(x=>x.trim()).filter(Boolean),steps:el('steps').value.split('\n').map(x=>x.trim()).filter(Boolean),notes:el('notes').value.split('\n').map(x=>x.trim()).filter(Boolean),source_url:el('url').value.trim(),visibility:'private'};
  const blob=new Blob([JSON.stringify(recipe,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='ricetta-instagram.json';a.click();URL.revokeObjectURL(a.href);
 });
 </script></body></html>

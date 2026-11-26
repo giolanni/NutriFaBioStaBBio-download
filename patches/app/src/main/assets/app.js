@@ -17,6 +17,7 @@ let active = 'Tutte', view = 'home';
 const cats = ['Tutte','Primo','Secondo','Pasto completo','Dolce','Altro'];
 
 function persist(){ localStorage.setItem('recipes', JSON.stringify(recipes)); }
+function recipeAuthor(r){ return r.author || r.source?.author || (r.source_type === 'user' ? r.owner_name : ''); }
 function isMine(r){ return r.source_type === 'user' && r.owner_id === profile.id; }
 function canSee(r){ return r.visibility === 'public' || isMine(r) || r.source_type === 'catalog'; }
 function visibleRecipes(){
@@ -37,7 +38,8 @@ function render(){
   $('#count').textContent = `${list.length} ricett${list.length === 1 ? 'a' : 'e'}`;
   $('#grid').innerHTML = list.length ? list.map(r => {
     const mine = isMine(r), privacy = mine ? `<span class="privacy ${r.visibility}">${r.visibility === 'private' ? '🔒 Privata' : '🌍 Pubblica'}</span>` : '';
-    const author = r.source_type === 'user' ? `<div class="author">di ${esc(r.owner_name)}</div>` : '';
+    const name = recipeAuthor(r);
+    const author = name ? `<div class="author">di ${esc(name)}</div>` : '';
     return `<article class="card" onclick="openRecipe('${esc(r.id)}')"><div class="photo" style="${r.image_data ? `background-image:url('${esc(r.image_data)}')` : ''}">${r.image_data ? '' : '🍽️'}</div><div class="body"><div class="cardTop"><span class="tag">${esc((r.category || ['ricetta'])[0])}</span>${privacy}</div><h3>${esc(r.title)}</h3>${author}<div class="meta">${esc(r.preparation_minutes || '—')} min · ${esc(r.servings || '—')} porzioni</div></div></article>`;
   }).join('') : `<div class="empty">${view === 'mine' ? '<strong>Il tuo ricettario è ancora vuoto.</strong><br>Crea la prima ricetta con il pulsante “＋ Ricetta”.' : 'Nessuna ricetta trovata.<br>Prova un altro ingrediente.'}</div>`;
 }
@@ -54,7 +56,7 @@ function setView(next){
 function openRecipe(id){
   const r = [...recipes,...remoteRecipes].find(x => x.id === id); if (!r || !canSee(r)) return;
   const n = r.nutrition || {}, mine = isMine(r);
-  $('#detailBody').innerHTML = `<div class="detailPhoto" style="${r.image_data ? `background-image:url('${esc(r.image_data)}')` : ''}"></div><div class="detailContent"><div class="detailHead"><span class="tag">${esc((r.category || []).join(' · '))}</span>${mine ? `<span class="privacy ${r.visibility}">${r.visibility === 'private' ? '🔒 Privata' : '🌍 Pubblica'}</span>` : ''}</div><h2>${esc(r.title)}</h2>${r.source_type === 'user' ? `<p class="byline">Ricetta di <strong>${esc(r.owner_name)}</strong></p>` : ''}<div class="meta">${esc(r.preparation_minutes || '—')} minuti · ${esc(r.servings || '—')} porzioni</div><h3>Valori nutrizionali</h3><div class="macro"><div><strong>${esc(n.calories_kcal ?? '—')}</strong>kcal</div><div><strong>${esc(n.protein_g ?? '—')} g</strong>proteine</div><div><strong>${esc(n.carbohydrates_g ?? '—')} g</strong>carbo</div><div><strong>${esc(n.fat_g ?? '—')} g</strong>grassi</div></div><h3>Ingredienti</h3><ul>${(r.ingredients || []).map(i => `<li>${esc(i.quantity ?? '')} ${esc(i.unit ?? '')} ${esc(i.name)}</li>`).join('')}</ul><h3>Procedimento</h3><ol>${(r.instructions || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>${mine ? `<div class="actions"><button onclick="detail.close();openEditor('${esc(r.id)}')">Modifica</button><button class="danger" onclick="deleteRecipe('${esc(r.id)}')">Elimina</button></div>` : ''}</div>`;
+  $('#detailBody').innerHTML = `<div class="detailPhoto" style="${r.image_data ? `background-image:url('${esc(r.image_data)}')` : ''}"></div><div class="detailContent"><div class="detailHead"><span class="tag">${esc((r.category || []).join(' · '))}</span>${mine ? `<span class="privacy ${r.visibility}">${r.visibility === 'private' ? '🔒 Privata' : '🌍 Pubblica'}</span>` : ''}</div><h2>${esc(r.title)}</h2>${recipeAuthor(r) ? `<p class="byline">Ricetta di <strong>${esc(recipeAuthor(r))}</strong></p>` : ''}<div class="meta">${esc(r.preparation_minutes || '—')} minuti · ${esc(r.servings || '—')} porzioni</div><h3>Valori nutrizionali</h3><div class="macro"><div><strong>${esc(n.calories_kcal ?? '—')}</strong>kcal</div><div><strong>${esc(n.protein_g ?? '—')} g</strong>proteine</div><div><strong>${esc(n.carbohydrates_g ?? '—')} g</strong>carbo</div><div><strong>${esc(n.fat_g ?? '—')} g</strong>grassi</div></div><h3>Ingredienti</h3><ul>${(r.ingredients || []).map(i => `<li>${esc(i.quantity ?? '')} ${esc(i.unit ?? '')} ${esc(i.name)}</li>`).join('')}</ul><h3>Procedimento</h3><ol>${(r.instructions || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>${mine ? `<div class="actions"><button onclick="detail.close();openEditor('${esc(r.id)}')">Modifica</button><button class="danger" onclick="deleteRecipe('${esc(r.id)}')">Elimina</button></div>` : ''}</div>`;
   $('#detail').showModal();
 }
 
@@ -63,7 +65,9 @@ function parseIngredient(line){
   return match ? {quantity:Number(match[1].replace(',','.')),unit:match[2] || '',name:match[3]} : {name:line.trim(),quantity:'',unit:''};
 }
 function openAddChoice(){ $('#addChoice').showModal(); }
+let fetchedCaptionAuthor = null;
 function openInstagramImporter(){
+  fetchedCaptionAuthor = null;
   $('#addChoice').close();
   $('#igUrl').value = '';
   $('#igCaption').value = '';
@@ -73,6 +77,7 @@ function openInstagramImporter(){
 function fetchIg(){
   const url = $('#igUrl').value.trim();
   if (!url) { $('#igStatus').textContent = 'Inserisci il link Instagram.'; return; }
+  fetchedCaptionAuthor = null;
   $('#igFetch').disabled = true;
   $('#igStatus').textContent = 'Lettura della caption da Instagram…';
   if (window.Android && Android.fetchInstagramCaption) Android.fetchInstagramCaption(url);
@@ -81,10 +86,13 @@ function fetchIg(){
 function captionResult(raw){
   $('#igFetch').disabled = false;
   const result = JSON.parse(raw);
+  if (!$('#igDialog').open || result.url !== $('#igUrl').value.trim()) return;
   if (result.error) { $('#igStatus').textContent = result.error + '. Puoi incollare la caption manualmente.'; return; }
   const doc = new DOMParser().parseFromString(result.html, 'text/html');
   const node = doc.querySelector('.Caption');
   if (!node) { $('#igStatus').textContent = 'Instagram non ha restituito la caption. Incollala manualmente o prova il servizio web.'; return; }
+  const username = node.querySelector('.CaptionUsername')?.textContent.trim().replace(/^@/, '');
+  if (/^[A-Za-z0-9._]{1,30}$/.test(username || '')) fetchedCaptionAuthor = '@' + username;
   node.querySelectorAll('.CaptionUsername,.CaptionComments,.CaptionCommentsExpand,script,style').forEach(x=>x.remove());
   node.querySelectorAll('br').forEach(x=>x.replaceWith(doc.createTextNode('\n')));
   const caption = node.textContent.trim();
@@ -115,8 +123,8 @@ function parseIg(){
     else if(!section && /^\d+(?:[.,/]\d+)?\s*(?:g|kg|ml|l|uova|cucchiai|cucchiaini)\b/i.test(line)) ingredients.push(line);
   }
   if(!steps.length){for(const line of lines.slice(1)){if(/\b(?:cuoci|versa|mescola|scalda|taglia|aggiungi|servi|padella|bollore)\b/i.test(line)&&!ingredients.includes(line))steps.push(line);}}
-  const draft = {title, ingredients, steps};
-  if ((!ingredients.length || !steps.length) && url) {
+  const draft = {title, ingredients, steps, author: fetchedCaptionAuthor};
+  if (url) {
     if (!window.Android?.analyzeInstagram) {
       $('#igStatus').textContent = 'Analisi video non disponibile. Puoi provare il servizio web.';
       return;
@@ -124,7 +132,9 @@ function parseIg(){
     igPending = {id: ++igAnalysisId, draft, caption};
     $('#igAnalyze').disabled = true;
     $('#igFetch').disabled = true;
-    $('#igStatus').textContent = 'Sto analizzando audio e immagini del Reel…';
+    $('#igStatus').textContent = ingredients.length && steps.length
+      ? 'Sto cercando una foto nel Reel…'
+      : 'Sto analizzando il Reel e cercando una foto…';
     Android.analyzeInstagram(url, caption, igPending.id);
     return;
   }
@@ -140,7 +150,9 @@ function analysisResult(id, raw) {
   if (!$('#igDialog').open) return;
   const {recipe, error} = JSON.parse(raw);
   if (recipe) {
-    showInstagramDraft(recipe, caption);
+    const captionComplete = draft.ingredients.length && draft.steps.length;
+    const result = captionComplete ? {...draft, image_data: recipe.image_data} : recipe;
+    showInstagramDraft({...result, author: recipe.author || draft.author}, caption);
   } else if (draft.ingredients.length || draft.steps.length) {
     showInstagramDraft({...draft, notes: [error]}, caption);
   } else {
@@ -151,7 +163,9 @@ function analysisResult(id, raw) {
 function showInstagramDraft(recipe, caption) {
   $('#igDialog').close();
   openEditor();
+  setEditorImage(recipe.image_data);
   $('#editTitle').value = recipe.title.slice(0,100);
+  $('#editAuthor').value = recipe.author || '';
   $('#editIngredients').value = recipe.ingredients.join('\n');
   $('#editInstructions').value = recipe.steps.join('\n');
   if (recipe.servings != null) $('#editServings').value = recipe.servings;
@@ -178,8 +192,9 @@ let editorImage=null;
 function openEditor(id=''){
   document.getElementById('importNote')?.remove();
   const r = id ? recipes.find(x => x.id === id && isMine(x)) : null;
-  editorImage=r?.image_data||null; $('#recipeForm').reset(); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
+  $('#recipeForm').reset(); setEditorImage(r?.image_data); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
   if (r) {
+    $('#editAuthor').value = r.author || r.source?.author || '';
     $('#editTitle').value = r.title || ''; $('#editCategory').value = (r.category || ['Altro'])[0].replace(/^./, c => c.toUpperCase()); $('#editMinutes').value = r.preparation_minutes || '';
     $('#editIngredients').value = (r.ingredients || []).map(i => [i.quantity,i.unit,i.name].filter(v => v !== '' && v != null).join(' ')).join('\n');
     $('#editInstructions').value = (r.instructions || []).join('\n'); $('#editServings').value = r.servings || ''; $('#editCalories').value = r.nutrition?.calories_kcal || '';
@@ -191,7 +206,7 @@ function openEditor(id=''){
 function saveRecipe(event){
   event.preventDefault(); const id = $('#editId').value || `user_${profile.id}_${Date.now()}`;
   const previous = recipes.find(r => r.id === id); if (previous && !isMine(previous)) return;
-  const recipe = {image_data:previous?.image_data||null,id,title:$('#editTitle').value.trim(),category:[$('#editCategory').value.toLowerCase()],ingredients:$('#editIngredients').value.split('\n').filter(x=>x.trim()).map(parseIngredient),instructions:$('#editInstructions').value.split('\n').filter(x=>x.trim()).map(x=>x.trim()),servings:Number($('#editServings').value) || null,preparation_minutes:Number($('#editMinutes').value) || null,nutrition:{...(previous?.nutrition || {}),calories_kcal:Number($('#editCalories').value) || null},source_type:'user',visibility:document.querySelector('input[name="visibility"]:checked').value,owner_id:profile.id,owner_name:profile.name,updated_at:new Date().toISOString()};
+  const recipe = {image_data:previous?.image_data||null,id,title:$('#editTitle').value.trim(),author:$('#editAuthor').value.trim() || null,category:[$('#editCategory').value.toLowerCase()],ingredients:$('#editIngredients').value.split('\n').filter(x=>x.trim()).map(parseIngredient),instructions:$('#editInstructions').value.split('\n').filter(x=>x.trim()).map(x=>x.trim()),servings:Number($('#editServings').value) || null,preparation_minutes:Number($('#editMinutes').value) || null,nutrition:{...(previous?.nutrition || {}),calories_kcal:Number($('#editCalories').value) || null},source_type:'user',visibility:document.querySelector('input[name="visibility"]:checked').value,owner_id:profile.id,owner_name:profile.name,updated_at:new Date().toISOString()};
   recipe.image_data=editorImage; recipes = previous ? recipes.map(r => r.id === id ? recipe : r) : [recipe,...recipes]; persist(); $('#editor').close(); setView('mine'); cloudSync();
 }
 function deleteRecipe(id){
@@ -286,7 +301,7 @@ async function cloudSync(){
  recipes=recipes.filter(r=>r.id!==restored.id);recipes.push(restored);
  }}
  persist();render();
- const rows=recipes.filter(isMine).filter(r=>!own.some(o=>o.local_id===r.id&&Date.parse(o.updated_at)>=Date.parse(r.updated_at||0))).map(r=>({owner_id:uid,local_id:r.id,title:r.title,ingredients:r.ingredients||[],instructions:r.instructions||[],category:r.category?.[0],nutrition:r.nutrition,is_public:r.visibility==='public',recipe_data:{servings:r.servings,preparation_minutes:r.preparation_minutes,image_data:validImage(r.image_data)},updated_at:r.updated_at||new Date().toISOString()}));
+ const rows=recipes.filter(isMine).filter(r=>!own.some(o=>o.local_id===r.id&&Date.parse(o.updated_at)>=Date.parse(r.updated_at||0))).map(r=>({owner_id:uid,local_id:r.id,title:r.title,ingredients:r.ingredients||[],instructions:r.instructions||[],category:r.category?.[0],nutrition:r.nutrition,is_public:r.visibility==='public',recipe_data:{author:r.author,servings:r.servings,preparation_minutes:r.preparation_minutes,image_data:validImage(r.image_data)},updated_at:r.updated_at||new Date().toISOString()}));
  if(rows.length)await cloudRequest('/rest/v1/recipes?on_conflict=owner_id,local_id','POST',rows,true,'resolution=merge-duplicates');
  await cloudRefresh();
  }catch(e){cloudMessage('Sincronizzazione: '+e.message);}finally{cloudBusy=false;if(cloudAgain){cloudAgain=false;cloudSync();}}
@@ -299,5 +314,24 @@ window.addEventListener('focus',cloudSync);
 const imageInput=document.createElement('input');
 imageInput.type='file';imageInput.accept='image/*';
 const imageLabel=document.createElement('label');imageLabel.textContent='Foto della ricetta';imageLabel.append(imageInput);
+const imagePreview = document.createElement('img');
+imagePreview.alt = 'Anteprima della foto della ricetta';
+imagePreview.hidden = true;
+imagePreview.style.maxWidth = '100%';
+imagePreview.style.maxHeight = '240px';
+const removeImage = document.createElement('button');
+removeImage.type = 'button';
+removeImage.textContent = 'Rimuovi foto';
+removeImage.hidden = true;
+removeImage.onclick = () => { imageInput.value = ''; setEditorImage(null); };
+imageLabel.append(imagePreview, removeImage);
 $('#recipeForm').prepend(imageLabel);
-imageInput.onchange=async()=>{try{const file=imageInput.files[0];if(!file)return;const img=new Image();const url=URL.createObjectURL(file);try{img.src=url;await img.decode();const canvas=document.createElement('canvas');const scale=Math.min(1,640/Math.max(img.width,img.height));canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);editorImage=validImage(canvas.toDataURL('image/jpeg',0.65));if(!editorImage)throw Error('Foto troppo grande');}finally{URL.revokeObjectURL(url);}}catch(e){alert(e.message);}};
+function setEditorImage(value) {
+  editorImage = validImage(value);
+  imagePreview.hidden = removeImage.hidden = !editorImage;
+  if (editorImage) imagePreview.src = editorImage;
+  else imagePreview.removeAttribute('src');
+}
+imageInput.onchange=async()=>{try{const file=imageInput.files[0];if(!file)return;const img=new Image();const url=URL.createObjectURL(file);try{img.src=url;await img.decode();const canvas=document.createElement('canvas');const scale=Math.min(1,640/Math.max(img.width,img.height));canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);const photo=validImage(canvas.toDataURL('image/jpeg',0.65));if(!photo)throw Error('Foto troppo grande');setEditorImage(photo);}finally{URL.revokeObjectURL(url);}}catch(e){alert(e.message);}};
+
+$('#igUrl').addEventListener('input', () => { fetchedCaptionAuthor = null; });
