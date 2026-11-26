@@ -136,9 +136,7 @@ function parseIg(){
     igPending = {id: ++igAnalysisId, draft, caption};
     $('#igAnalyze').disabled = true;
     $('#igFetch').disabled = true;
-    $('#igStatus').textContent = ingredients.length && steps.length
-      ? 'Sto cercando una foto nel Reel…'
-      : 'Sto analizzando il Reel e cercando una foto…';
+    $('#igStatus').textContent = 'Sto analizzando il post Instagram…';
     Android.analyzeInstagram(url, caption, igPending.id);
     return;
   }
@@ -154,9 +152,7 @@ function analysisResult(id, raw) {
   if (!$('#igDialog').open) return;
   const {recipe, error} = JSON.parse(raw);
   if (recipe) {
-    const captionComplete = draft.ingredients.length && draft.steps.length;
-    const result = captionComplete ? {...draft, image_data: recipe.image_data} : recipe;
-    showInstagramDraft({...result, author: cleanAuthor(recipe.author) || draft.author}, caption);
+    showInstagramDraft({...recipe, author: cleanAuthor(recipe.author) || draft.author}, caption);
   } else if (draft.ingredients.length || draft.steps.length) {
     showInstagramDraft({...draft, notes: [error]}, caption);
   } else {

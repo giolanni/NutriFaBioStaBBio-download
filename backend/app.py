@@ -18,7 +18,7 @@ from yt_dlp import YoutubeDL
 
 from reel_cover import instagram_thumbnail_image, reel_cover_image
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.8")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.9")
 
 origins = [
     item.strip()
@@ -280,7 +280,7 @@ def recipe_from_caption(text: str, manual: bool = False) -> Recipe:
                     rest,
                     flags=re.I,
                 )
-            if rest:
+            if rest and not (name == "steps" and re.match(r"^(?:nel|in|guarda|vedi)\s+(?:il\s+)?(?:video|reel)\b", rest, re.I)):
                 sections[name].extend(split_caption_items(rest) if name == "ingredients" else [rest])
             break
         if not found_header:
@@ -292,7 +292,7 @@ def recipe_from_caption(text: str, manual: bool = False) -> Recipe:
     steps = [value for value in steps if value]
     notes = sections["notes"]
 
-    if not ingredients and not steps:
+    if manual and not ingredients and not steps:
         candidates = sections["pre"][1:]
         ingredient_pattern = re.compile(
             r"\b(?:\d+(?:[.,/]\d+)?|q\.?\s*b\.?)\s*"
@@ -380,7 +380,9 @@ def analyze_video(video_path: Path, caption: str = "", include_cover: bool = Fal
 
         prompt = """
 Analizza attentamente immagini, scritte in sovrimpressione e audio di questo
-video di cucina. Ricostruisci la ricetta in italiano. Non inventare quantità,
+video di cucina. Ricostruisci la ricetta in italiano. Ascolta la voce narrante
+per ricavare il procedimento passo per passo, anche se la caption elenca solo
+gli ingredienti. Ricava il titolo dal piatto effettivamente descritto. Non inventare quantità,
 tempi, calorie o passaggi non presenti: usa null per i numeri mancanti e indica
 i dubbi nelle note. Ingredienti e procedimento devono essere liste ordinate.
 Usa anche l'eventuale caption allegata come fonte complementare. Segnala
