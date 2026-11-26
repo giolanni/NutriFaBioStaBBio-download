@@ -4,6 +4,8 @@ import json
 import math
 from pathlib import Path
 import subprocess
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 def _decode(command: list[str]) -> bytes:
@@ -24,6 +26,31 @@ def _score(frame: bytes) -> float:
         for index in range(65, len(frame)) if index % 64
     ) / len(frame)
     return visible * contrast
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def instagram_thumbnail_image(url: str | None) -> str | None:
+    """Load a bounded public thumbnail from Instagram's media CDN."""
+    if not url:
+        return None
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname or ""
+        if (parsed.scheme != "https" or parsed.netloc != host
+                or not host.endswith((".cdninstagram.com", ".fbcdn.net"))):
+            return None
+        request = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*"})
+        with build_opener(_NoRedirect()).open(request, timeout=5) as response:
+            image = response.read(250_001)
+        if not image.startswith(b"\xff\xd8\xff") or len(image) > 250_000:
+            return None
+        return "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii")
+    except (OSError, ValueError):
+        return None
 
 
 def reel_cover_image(video: Path, preferred_second: float | None = None) -> str | None:
@@ -48,9 +75,13 @@ def reel_cover_image(video: Path, preferred_second: float | None = None) -> str 
                 "ffmpeg", "-nostdin", "-v", "error", "-ss", f"{second:.3f}",
                 "-i", str(video), "-map", "0:v:0", "-frames:v", "1",
             ]
-            gray = _decode(command + [
-                "-vf", "scale=64:64,format=gray", "-threads", "1", "-f", "rawvideo", "pipe:1"
-            ])
+            try:
+                gray = _decode(command + [
+                    "-vf", "scale=64:64,format=gray", "-threads", "1",
+                    "-f", "rawvideo", "pipe:1",
+                ])
+            except (OSError, subprocess.SubprocessError):
+                continue
             score = bias * _score(gray)
             if score > best_score:
                 best_score, best_command = score, command

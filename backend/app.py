@@ -16,9 +16,9 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from yt_dlp import YoutubeDL
 
-from reel_cover import reel_cover_image
+from reel_cover import instagram_thumbnail_image, reel_cover_image
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.6")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.7")
 
 origins = [
     item.strip()
@@ -86,7 +86,7 @@ def instagram_author(value: str | None) -> str | None:
     return f"@{username}" if re.fullmatch(r"[A-Za-z0-9._]{1,30}", username) else None
 
 
-def download_reel(url: str, directory: Path) -> tuple[Path, str | None]:
+def download_reel(url: str, directory: Path) -> tuple[Path, str | None, str | None]:
     output = str(directory / "reel.%(ext)s")
     options = {
         "format": "best[height<=720]/best",
@@ -112,7 +112,7 @@ def download_reel(url: str, directory: Path) -> tuple[Path, str | None]:
     candidates = [path, directory / "reel.mp4", *directory.glob("reel.*")]
     for candidate in candidates:
         if candidate.exists() and candidate.is_file():
-            return candidate, instagram_author(info.get("uploader_id"))
+            return candidate, instagram_author(info.get("uploader_id")), info.get("thumbnail")
     raise HTTPException(422, "Il Reel non contiene un video analizzabile.")
 
 
@@ -506,11 +506,11 @@ def caption_cover(recipe: Recipe, url: str, include_cover: bool) -> Recipe:
     if include_cover:
         try:
             with tempfile.TemporaryDirectory(prefix="nutrifabio-cover-") as tmp:
-                video, author = download_reel(url, Path(tmp))
+                video, author, thumbnail = download_reel(url, Path(tmp))
                 recipe.author = recipe.author or author
-                recipe.image_data = reel_cover_image(video)
-        except HTTPException:
-            pass
+                recipe.image_data = reel_cover_image(video) or instagram_thumbnail_image(thumbnail)
+        except HTTPException as exc:
+            print(f"Copertina Reel: {exc.detail}", flush=True)
     return recipe
 
 
@@ -567,15 +567,17 @@ def analyze(payload: AnalyzeRequest):
 
     try:
         with tempfile.TemporaryDirectory(prefix="nutrifabio-") as tmp:
-            video, video_author = download_reel(url, Path(tmp))
+            video, video_author, thumbnail = download_reel(url, Path(tmp))
             author = author or video_author
             try:
                 recipe = analyze_video(video, "\n\n".join(captions)[:20000], payload.include_cover)
                 recipe.author = author
+                if payload.include_cover and not recipe.image_data:
+                    recipe.image_data = instagram_thumbnail_image(thumbnail)
                 return recipe
             except HTTPException:
                 if partial_recipe and payload.include_cover:
-                    partial_recipe.image_data = reel_cover_image(video)
+                    partial_recipe.image_data = reel_cover_image(video) or instagram_thumbnail_image(thumbnail)
                 raise
     except HTTPException as exc:
         if partial_recipe is None:
