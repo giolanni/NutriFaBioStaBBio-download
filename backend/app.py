@@ -18,7 +18,7 @@ from yt_dlp import YoutubeDL
 
 from reel_cover import instagram_thumbnail_image, reel_cover_image
 
-app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.7")
+app = FastAPI(title="NutriFaBioStaBBio API", version="1.3.8")
 
 origins = [
     item.strip()
@@ -83,7 +83,7 @@ def validate_instagram_url(value: str) -> str:
 
 def instagram_author(value: str | None) -> str | None:
     username = (value or "").strip().removeprefix("@")
-    return f"@{username}" if re.fullmatch(r"[A-Za-z0-9._]{1,30}", username) else None
+    return f"@{username}" if not username.isdecimal() and re.fullmatch(r"[A-Za-z0-9._]{1,30}", username) else None
 
 
 def download_reel(url: str, directory: Path) -> tuple[Path, str | None, str | None]:

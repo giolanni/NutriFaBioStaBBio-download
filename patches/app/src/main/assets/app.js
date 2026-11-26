@@ -17,7 +17,11 @@ let active = 'Tutte', view = 'home';
 const cats = ['Tutte','Primo','Secondo','Pasto completo','Dolce','Altro'];
 
 function persist(){ localStorage.setItem('recipes', JSON.stringify(recipes)); }
-function recipeAuthor(r){ return r.author || r.source?.author || (r.source_type === 'user' ? r.owner_name : ''); }
+function cleanAuthor(value){
+  const name = typeof value === 'string' ? value.trim() : '';
+  return /^@?\d+$/.test(name) ? '' : name;
+}
+function recipeAuthor(r){ return cleanAuthor(r.author) || cleanAuthor(r.source?.author) || (r.source_type === 'user' ? r.owner_name : ''); }
 function isMine(r){ return r.source_type === 'user' && r.owner_id === profile.id; }
 function canSee(r){ return r.visibility === 'public' || isMine(r) || r.source_type === 'catalog'; }
 function visibleRecipes(){
@@ -92,7 +96,7 @@ function captionResult(raw){
   const node = doc.querySelector('.Caption');
   if (!node) { $('#igStatus').textContent = 'Instagram non ha restituito la caption. Incollala manualmente o prova il servizio web.'; return; }
   const username = node.querySelector('.CaptionUsername')?.textContent.trim().replace(/^@/, '');
-  if (/^[A-Za-z0-9._]{1,30}$/.test(username || '')) fetchedCaptionAuthor = '@' + username;
+  if (cleanAuthor(username) && /^[A-Za-z0-9._]{1,30}$/.test(username)) fetchedCaptionAuthor = '@' + username;
   node.querySelectorAll('.CaptionUsername,.CaptionComments,.CaptionCommentsExpand,script,style').forEach(x=>x.remove());
   node.querySelectorAll('br').forEach(x=>x.replaceWith(doc.createTextNode('\n')));
   const caption = node.textContent.trim();
@@ -152,7 +156,7 @@ function analysisResult(id, raw) {
   if (recipe) {
     const captionComplete = draft.ingredients.length && draft.steps.length;
     const result = captionComplete ? {...draft, image_data: recipe.image_data} : recipe;
-    showInstagramDraft({...result, author: recipe.author || draft.author}, caption);
+    showInstagramDraft({...result, author: cleanAuthor(recipe.author) || draft.author}, caption);
   } else if (draft.ingredients.length || draft.steps.length) {
     showInstagramDraft({...draft, notes: [error]}, caption);
   } else {
@@ -165,7 +169,7 @@ function showInstagramDraft(recipe, caption) {
   openEditor();
   setEditorImage(recipe.image_data);
   $('#editTitle').value = recipe.title.slice(0,100);
-  $('#editAuthor').value = recipe.author || '';
+  $('#editAuthor').value = cleanAuthor(recipe.author);
   $('#editIngredients').value = recipe.ingredients.join('\n');
   $('#editInstructions').value = recipe.steps.join('\n');
   if (recipe.servings != null) $('#editServings').value = recipe.servings;
@@ -194,7 +198,7 @@ function openEditor(id=''){
   const r = id ? recipes.find(x => x.id === id && isMine(x)) : null;
   $('#recipeForm').reset(); setEditorImage(r?.image_data); $('#editId').value = r?.id || ''; $('#editorTitle').textContent = r ? 'Modifica ricetta' : 'Nuova ricetta';
   if (r) {
-    $('#editAuthor').value = r.author || r.source?.author || '';
+    $('#editAuthor').value = cleanAuthor(r.author) || cleanAuthor(r.source?.author);
     $('#editTitle').value = r.title || ''; $('#editCategory').value = (r.category || ['Altro'])[0].replace(/^./, c => c.toUpperCase()); $('#editMinutes').value = r.preparation_minutes || '';
     $('#editIngredients').value = (r.ingredients || []).map(i => [i.quantity,i.unit,i.name].filter(v => v !== '' && v != null).join(' ')).join('\n');
     $('#editInstructions').value = (r.instructions || []).join('\n'); $('#editServings').value = r.servings || ''; $('#editCalories').value = r.nutrition?.calories_kcal || '';
@@ -206,7 +210,7 @@ function openEditor(id=''){
 function saveRecipe(event){
   event.preventDefault(); const id = $('#editId').value || `user_${profile.id}_${Date.now()}`;
   const previous = recipes.find(r => r.id === id); if (previous && !isMine(previous)) return;
-  const recipe = {image_data:previous?.image_data||null,id,title:$('#editTitle').value.trim(),author:$('#editAuthor').value.trim() || null,category:[$('#editCategory').value.toLowerCase()],ingredients:$('#editIngredients').value.split('\n').filter(x=>x.trim()).map(parseIngredient),instructions:$('#editInstructions').value.split('\n').filter(x=>x.trim()).map(x=>x.trim()),servings:Number($('#editServings').value) || null,preparation_minutes:Number($('#editMinutes').value) || null,nutrition:{...(previous?.nutrition || {}),calories_kcal:Number($('#editCalories').value) || null},source_type:'user',visibility:document.querySelector('input[name="visibility"]:checked').value,owner_id:profile.id,owner_name:profile.name,updated_at:new Date().toISOString()};
+  const recipe = {image_data:previous?.image_data||null,id,title:$('#editTitle').value.trim(),author:cleanAuthor($('#editAuthor').value) || null,category:[$('#editCategory').value.toLowerCase()],ingredients:$('#editIngredients').value.split('\n').filter(x=>x.trim()).map(parseIngredient),instructions:$('#editInstructions').value.split('\n').filter(x=>x.trim()).map(x=>x.trim()),servings:Number($('#editServings').value) || null,preparation_minutes:Number($('#editMinutes').value) || null,nutrition:{...(previous?.nutrition || {}),calories_kcal:Number($('#editCalories').value) || null},source_type:'user',visibility:document.querySelector('input[name="visibility"]:checked').value,owner_id:profile.id,owner_name:profile.name,updated_at:new Date().toISOString()};
   recipe.image_data=editorImage; recipes = previous ? recipes.map(r => r.id === id ? recipe : r) : [recipe,...recipes]; persist(); $('#editor').close(); setView('mine'); cloudSync();
 }
 function deleteRecipe(id){
